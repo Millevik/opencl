@@ -23,18 +23,44 @@
 #include <vector>
 
 #include "caf/opencl/global.hpp"
+//#include "caf/opencl/mem_ref.hpp"
 #include "caf/opencl/smart_ptr.hpp"
+#include "caf/opencl/opencl_err.hpp"
 
 namespace caf {
 namespace opencl {
 
 class program;
 class manager;
+template <class T> class mem_ref;
 
 class device {
 public:
   friend class program;
   friend class manager;
+  template <class T> friend class mem_ref;
+
+  template <class T>
+  mem_ref<T> copy_to_device(cl_mem_flags flags, const std::vector<T>& data,
+                            optional<size_t> size = none,
+                            cl_bool blocking = CL_FALSE) {
+    bool requires_transfer = !data.empty();
+    size_t num_elements = size ? *size : data.size();
+    size_t buffer_size = sizeof(T) * num_elements;
+    auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(), flags,
+                        buffer_size, nullptr);
+    event_ptr event;
+    if (requires_transfer) {
+      event.reset(v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
+                                  queue_.get(), buffer, blocking,
+                                  cl_uint{0}, buffer_size, data.data()));
+    } else {
+      event.reset(v2get(CAF_CLF(clCreateUserEvent), context_.get()));
+      v1callcl(CAF_CLF(clSetUserEventStatus), event.get(), CL_COMPLETE);
+    }
+    return mem_ref<T>{std::move(data), this, buffer, event, size};
+    // TODO: save reef to mem_ref and clean up on destruction?
+  }
 
   /// Intialize a new device in a context using a sepcific device_id
   static device create(const context_ptr& context, const device_ptr& device_id,
@@ -106,7 +132,7 @@ private:
   static std::string info_string(const device_ptr& device_id,
                                  unsigned info_flag);
   device_ptr device_id_;
-  command_queue_ptr command_queue_;
+  command_queue_ptr queue_;
   context_ptr context_;
   unsigned id_;
 

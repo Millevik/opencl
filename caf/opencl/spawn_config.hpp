@@ -29,19 +29,23 @@ class spawn_config {
 public:
   spawn_config(const opencl::dim_vec& dims,
                const opencl::dim_vec& offset = {},
-               const opencl::dim_vec& local_dims = {})
+               const opencl::dim_vec& local_dims = {},
+               bool copy_results_back = false)
     : dims_{dims},
       offset_{offset},
-      local_dims_{local_dims} {
+      local_dims_{local_dims},
+      copy_results_back_{copy_results_back} {
     // nop
   }
 
   spawn_config(opencl::dim_vec&& dims,
                opencl::dim_vec&& offset = {},
-               opencl::dim_vec&& local_dims = {})
+               opencl::dim_vec&& local_dims = {},
+               bool copy_results_back = false)
     : dims_{std::move(dims)},
       offset_{std::move(offset)},
-      local_dims_{std::move(local_dims)} {
+      local_dims_{std::move(local_dims)},
+      copy_results_back_{copy_results_back} {
     // nop
   }
 
@@ -57,11 +61,15 @@ public:
     return local_dims_;
   }
 
+  bool copy_results_back() const {
+    return copy_results_back_;
+  }
+
 private:
   const opencl::dim_vec dims_;
   const opencl::dim_vec offset_;
   const opencl::dim_vec local_dims_;
-
+  bool copy_results_back_;
 };
 
 } // namespace opencl

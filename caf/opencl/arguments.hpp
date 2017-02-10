@@ -73,10 +73,10 @@ struct out {
 };
 
 template <class Arg>
-struct buffer {
-  buffer() = default;
+struct scratch {
+  scratch() = default;
   template <class F>
-  buffer(F fun) {
+  scratch(F fun) {
     fun_ = [fun](message& msg) -> optional<size_t> {
       auto res = msg.apply(fun);
       size_t result;
@@ -118,7 +118,7 @@ template <class T>
 struct is_opencl_arg<out<T>> : std::true_type {};
 
 template <class T>
-struct is_opencl_arg<buffer<T>> : std::true_type {};
+struct is_opencl_arg<scratch<T>> : std::true_type {};
 
 /// Filter type lists for input arguments, in and in_out.
 template <class T>
@@ -140,7 +140,7 @@ struct is_output_arg<out<T>> : std::true_type {};
 template <class T>
 struct is_output_arg<in_out<T>> : std::true_type {};
 
-/// Filter for arguments that require size; out & buffer
+/// Filter for arguments that require size; out & scratch
 template <class T>
 struct requires_size_arg : std::false_type {};
 
@@ -148,7 +148,7 @@ template <class T>
 struct requires_size_arg<out<T>> : std::true_type {};
 
 template <class T>
-struct requires_size_arg<buffer<T>> : std::true_type {};
+struct requires_size_arg<scratch<T>> : std::true_type {};
 
 /// extract types
 template <class T>
@@ -170,7 +170,7 @@ struct extract_type<out<T>> {
 };
 
 template <class T>
-struct extract_type<buffer<T>> {
+struct extract_type<scratch<T>> {
   using type = typename std::decay<typename carr_to_vec<T>::type>::type;
 };
 

@@ -160,7 +160,7 @@ program manager::create_program(const char* kernel_source, const char* options,
       available_kernels.emplace(string(name.data()), move(kernel));
     }
   }
-  return {dev.context_, dev.command_queue_, pptr, move(available_kernels)};
+  return {dev.context_, dev.queue_, pptr, move(available_kernels)};
 }
 
 manager::manager(actor_system& sys) : system_(sys){

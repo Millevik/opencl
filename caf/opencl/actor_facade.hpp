@@ -93,7 +93,6 @@ public:
     return "OpenCL actor";
   }
 
-
   static actor create(actor_config actor_cfg, const program& prog,
                       const char* kernel_name, const spawn_config& spawn_cfg,
                       input_mapping map_args, output_mapping map_result,
@@ -142,28 +141,26 @@ public:
     CAF_LOG_TRACE("");
     if (map_args_) {
       auto mapped = map_args_(content);
-      if (! mapped) {
+      if (!mapped)
         return;
-      }
       content = std::move(*mapped);
     }
-    if (! content.match_elements(input_types{})) {
+    if (!content.match_elements(input_types{}))
       return;
-    }
     auto hdl = std::make_tuple(sender, mid.response_id());
     evnt_vec events;
     args_vec input_buffers;
     args_vec output_buffers;
-    args_vec plain_buffers;
+    args_vec scratch_buffers;
     size_vec result_sizes;
-    add_kernel_arguments(events, input_buffers, output_buffers, plain_buffers,
+    add_kernel_arguments(events, input_buffers, output_buffers, scratch_buffers,
                          result_sizes, content, indices);
     auto cmd = make_counted<command_type>(std::move(hdl),
                                           actor_cast<strong_actor_ptr>(this),
                                           std::move(events),
                                           std::move(input_buffers),
                                           std::move(output_buffers),
-                                          std::move(plain_buffers),
+                                          std::move(scratch_buffers),
                                           std::move(result_sizes),
                                           std::move(content));
     cmd->enqueue();
@@ -206,12 +203,12 @@ public:
   /// to prevent them from being deleted before our operation finished
   template <long I, long... Is>
   void add_kernel_arguments(evnt_vec& events, args_vec& input_buffers,
-                            args_vec& output_buffers, args_vec& plain_buffers,
-                            size_vec& sizes, message& msg,
-                            detail::int_list<I, Is...>) {
-    create_buffer<I>(std::get<I>(argument_types_), events, sizes,
-                     input_buffers, output_buffers, plain_buffers, msg);
-    add_kernel_arguments(events, input_buffers, output_buffers, plain_buffers,
+                            args_vec& output_buffers, args_vec& scratch_buffers,
+                            size_vec& sizes,
+                            message& msg, detail::int_list<I, Is...>) {
+    create_buffer<I>(std::get<I>(argument_types_), events, sizes, input_buffers,
+                     output_buffers, scratch_buffers, msg);
+    add_kernel_arguments(events, input_buffers, output_buffers, scratch_buffers,
                          sizes, msg, detail::int_list<Is...>{});
   }
 
@@ -281,8 +278,8 @@ public:
   }
 
   template <long I, class T>
-  void create_buffer(const buffer<T>& wrapper, evnt_vec&, size_vec&,
-                     args_vec&, args_vec&, args_vec& plain_buffers,
+  void create_buffer(const scratch<T>& wrapper, evnt_vec&, size_vec&,
+                     args_vec&, args_vec&, args_vec& scratch_buffers,
                      message& msg) {
     using container_type = typename detail::tl_at<unpacked_types, I>::type;
     using value_type = typename container_type::value_type;
@@ -293,9 +290,9 @@ public:
                         buffer_size, nullptr);
     mem_ptr tmp;
     tmp.reset(buffer, false);
-    plain_buffers.push_back(tmp);
+    scratch_buffers.push_back(tmp);
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
-             sizeof(cl_mem), static_cast<void*>(&plain_buffers.back()));
+             sizeof(cl_mem), static_cast<void*>(&scratch_buffers.back()));
   }
 
   template <class Fun>

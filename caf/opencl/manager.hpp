@@ -35,6 +35,7 @@
 #include "caf/opencl/platform.hpp"
 #include "caf/opencl/smart_ptr.hpp"
 #include "caf/opencl/actor_facade.hpp"
+#include "caf/opencl/actor_facade_phase.hpp"
 
 #include "caf/opencl/detail/spawn_helper.hpp"
 
@@ -162,6 +163,42 @@ public:
              create_program(source), fname, config,
              std::move(map_args), std::move(map_result),
              std::forward<Ts>(xs)...);
+  }
+
+  /// Compiles `source` and creates a new actor facade phase for an OpenCL
+  /// kernel that invokes the function named `fname`. The template arguments
+  /// should match the kernel signature, allowing vector<T> for T*. Messages
+  /// sent to the actor should contain mem_ref<T> matching the signature.
+  /// @throws std::runtime_error if more than three dimensions are set,
+  ///                            <tt>dims.empty()</tt>, a compilation error
+  ///                            occured, or @p clCreateKernel failed.
+  template <class... Ts>
+  actor spawn_phase(const char* source, const char* fname,
+                    const opencl::spawn_config& config) {
+    return actor_cast<actor>(
+      actor_facade_phase<Ts...>::create(
+        actor_config{system_.dummy_execution_unit()},
+        create_program(source), fname, config
+      )
+    );
+  }
+
+  /// Creates a new actor facade phase for an OpenCL kernel that invokes
+  /// the function named `fname` from `prog`. The template arguments
+  /// should match the kernel signature, allowing vector<T> for T*. Messages
+  /// sent to the actor should contain mem_ref<T> matching the signature.
+  /// @throws std::runtime_error if more than three dimensions are set,
+  ///                            <tt>dims.empty()</tt>, a compilation error
+  ///                            occured, or @p clCreateKernel failed.
+  template <class... Ts>
+  actor spawn_phase(const opencl::program& prog, const char* fname,
+                    const opencl::spawn_config& config) {
+    return actor_cast<actor>(
+      actor_facade_phase<Ts...>::create(
+        actor_config{system_.dummy_execution_unit()},
+        prog, fname, config
+      )
+    );
   }
 
 protected:

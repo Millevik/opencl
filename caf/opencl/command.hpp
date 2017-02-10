@@ -47,7 +47,7 @@ public:
   command(std::tuple<strong_actor_ptr,message_id> handle,
           strong_actor_ptr actor_facade,
           std::vector<cl_event> events, std::vector<mem_ptr> input_bufs,
-          std::vector<mem_ptr> output_bufs, std::vector<mem_ptr> plain_bufs,
+          std::vector<mem_ptr> output_bufs, std::vector<mem_ptr> scratch_bufs,
           std::vector<size_t> result_sizes,
           message msg)
       : result_sizes_(std::move(result_sizes)),
@@ -56,7 +56,7 @@ public:
         mem_in_events_(std::move(events)),
         input_buffers_(std::move(input_bufs)),
         output_buffers_(std::move(output_bufs)),
-        plain_buffers_(std::move(plain_bufs)),
+        scratch_buffers_(std::move(scratch_bufs)),
         msg_(std::move(msg)) {
     // nop
   }
@@ -97,46 +97,45 @@ public:
       clReleaseEvent(event_k);
       this->deref();
       return;
-    } 
-      enqueue_read_buffers(event_k, detail::get_indices(result_buffers_));
-      cl_event marker;
+    }
+    enqueue_read_buffers(event_k, detail::get_indices(result_buffers_));
+    cl_event marker;
 #if defined(__APPLE__)
-      err = clEnqueueMarkerWithWaitList(
-        actor_facade->queue_.get(),
-        static_cast<cl_uint>(mem_out_events_.size()),
-        mem_out_events_.data(), &marker
-      );
+    err = clEnqueueMarkerWithWaitList(
+      actor_facade->queue_.get(),
+      static_cast<cl_uint>(mem_out_events_.size()),
+      mem_out_events_.data(), &marker
+    );
 #else
-      err = clEnqueueMarker(actor_facade->queue_.get(), &marker);
+    err = clEnqueueMarker(actor_facade->queue_.get(), &marker);
 #endif
-      if (err != CL_SUCCESS) {
-        CAF_LOG_ERROR("clSetEventCallback: " << CAF_ARG(get_opencl_error(err)));
-        clReleaseEvent(marker);
-        clReleaseEvent(event_k);
-        this->deref(); // callback is not set
-        return;
-      }
-      err = clSetEventCallback(marker, CL_COMPLETE,
-                               [](cl_event, cl_int, void* data) {
-                                 auto cmd = reinterpret_cast<command*>(data);
-                                 cmd->handle_results();
-                                 cmd->deref();
-                               },
-                               this);
-      if (err != CL_SUCCESS) {
-        CAF_LOG_ERROR("clSetEventCallback: " << CAF_ARG(get_opencl_error(err)));
-        clReleaseEvent(marker);
-        clReleaseEvent(event_k);
-        this->deref(); // callback is not set
-        return;
-      }
-      err = clFlush(actor_facade->queue_.get());
-      if (err != CL_SUCCESS) {
-        CAF_LOG_ERROR("clFlush: " << CAF_ARG(get_opencl_error(err)));
-      }
-      mem_out_events_.push_back(std::move(event_k));
-      mem_out_events_.push_back(std::move(marker));
-    
+    if (err != CL_SUCCESS) {
+      CAF_LOG_ERROR("clSetEventCallback: " << CAF_ARG(get_opencl_error(err)));
+      clReleaseEvent(marker);
+      clReleaseEvent(event_k);
+      this->deref(); // callback is not set
+      return;
+    }
+    err = clSetEventCallback(marker, CL_COMPLETE,
+                             [](cl_event, cl_int, void* data) {
+                               auto cmd = reinterpret_cast<command*>(data);
+                               cmd->handle_results();
+                               cmd->deref();
+                             },
+                             this);
+    if (err != CL_SUCCESS) {
+      CAF_LOG_ERROR("clSetEventCallback: " << CAF_ARG(get_opencl_error(err)));
+      clReleaseEvent(marker);
+      clReleaseEvent(event_k);
+      this->deref(); // callback is not set
+      return;
+    }
+    err = clFlush(actor_facade->queue_.get());
+    if (err != CL_SUCCESS) {
+      CAF_LOG_ERROR("clFlush: " << CAF_ARG(get_opencl_error(err)));
+    }
+    mem_out_events_.push_back(std::move(event_k));
+    mem_out_events_.push_back(std::move(marker));
   }
 
 private:
@@ -147,7 +146,7 @@ private:
   std::vector<cl_event> mem_out_events_;
   std::vector<mem_ptr> input_buffers_;
   std::vector<mem_ptr> output_buffers_;
-  std::vector<mem_ptr> plain_buffers_;
+  std::vector<mem_ptr> scratch_buffers_;
   std::tuple<Ts...> result_buffers_;
   message msg_; // required to keep the argument buffers alive (async copy)
 
@@ -189,7 +188,7 @@ private:
                                     result_buffers_)
                        : message_from_results{}(result_buffers_);
     get<0>(handle_)->enqueue(actor_facade_, get<1>(handle_), std::move(msg),
-                            nullptr);
+                             nullptr);
   }
 };
 

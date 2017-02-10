@@ -108,7 +108,7 @@ string device::info_string(const device_ptr& device_id, unsigned info_flag) {
 device::device(device_ptr device_id, command_queue_ptr queue,
                context_ptr context, unsigned id)
   : device_id_(std::move(device_id)),
-    command_queue_(std::move(queue)),
+    queue_(std::move(queue)),
     context_(std::move(context)),
     id_(id) { }
 
