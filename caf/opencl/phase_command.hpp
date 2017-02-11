@@ -45,11 +45,11 @@ template <class FacadeType, class... Ts>
 class phase_command : public ref_counted {
 public:
   phase_command(std::tuple<strong_actor_ptr,message_id> handle,
-                strong_actor_ptr actor_facade,
+                strong_actor_ptr facade,
                 std::vector<cl_event> events,
-                std::tuple<Ts> refs)
+                std::tuple<Ts...> refs)
     : handle_(std::move(handle)),
-      actor_facade_(std::move(actor_facade)),
+      actor_facade_(std::move(facade)),
       events_(std::move(events)),
       refs_(std::move(refs)) {
     // nop
@@ -67,21 +67,21 @@ public:
     auto data_or_nullptr = [](const dim_vec& vec) {
       return vec.empty() ? nullptr : vec.data();
     };
-    auto actor_facade =
+    auto facade =
       static_cast<FacadeType*>(actor_cast<abstract_actor*>(actor_facade_));
     auto err = clEnqueueNDRangeKernel(
-      actor_facade->queue_.get(), actor_facade->kernel_.get(),
-      static_cast<cl_uint>(actor_facade->spawn_cfg_.dimensions().size()),
-      data_or_nullptr(actor_facade->spawn_cfg_.offsets()),
-      data_or_nullptr(actor_facade->spawn_cfg_.dimensions()),
-      data_or_nullptr(actor_facade->spawn_cfg_.local_dimensions()),
+      facade->queue_.get(), facade->kernel_.get(),
+      static_cast<cl_uint>(facade->spawn_cfg_.dimensions().size()),
+      data_or_nullptr(facade->spawn_cfg_.offsets()),
+      data_or_nullptr(facade->spawn_cfg_.dimensions()),
+      data_or_nullptr(facade->spawn_cfg_.local_dimensions()),
       static_cast<cl_uint>(events_.size()),
       (events_.empty() ? nullptr : events_.data()), &exec_
     );
     if (err != CL_SUCCESS) {
       CAF_LOG_ERROR("clEnqueueNDRangeKernel: "
                     << CAF_ARG(get_opencl_error(err)));
-      clReleaseEvent(kernel_event);
+      clReleaseEvent(exec_);
       this->deref();
       return;
     }
@@ -100,15 +100,14 @@ public:
       this->deref(); // callback is not set
       return;
     }
-    err = clFlush(actor_facade->queue_.get());
+    err = clFlush(facade->queue_.get());
     if (err != CL_SUCCESS)
       CAF_LOG_ERROR("clFlush: " << CAF_ARG(get_opencl_error(err)));
   }
 
 private:
   void handle_results() {
-    auto actor_facade =
-      static_cast<FacadeType*>(actor_cast<abstract_actor*>(actor_facade_));
+    // TODO: problem is here with message_from_results
     auto msg = message_from_results{}(refs_);
     get<0>(handle_)->enqueue(actor_facade_, get<1>(handle_), std::move(msg),
                              nullptr);
@@ -117,9 +116,9 @@ private:
   std::tuple<strong_actor_ptr,message_id> handle_;
   strong_actor_ptr actor_facade_;
   std::vector<cl_event> events_;
-  std::tuple<Ts> refs_;
+  std::tuple<Ts...> refs_;
   cl_event exec_;
-}:
+};
 
 } // namespace opencl
 } // namespace caf

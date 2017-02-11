@@ -447,11 +447,10 @@ void test_phases(actor_system& sys) {
   ivec input = make_iota_vector<int>(problem_size);
   ivec expected{input};
   for_each(begin(expected), end(expected), [](int& val) { val *= 2; });
-  /*
   auto prog   = mngr.create_program(kernel_source_inout, "", dev);
   auto conf   = spawn_config{dims{matrix_size, matrix_size}};
   auto worker = mngr.spawn_phase<int*>(prog, kernel_name_inout, conf);
-
+/*
   auto w1 = mngr.spawn(mngr.create_program(kernel_source, "", dev), kernel_name,
                        opencl::spawn_config{dims{matrix_size, matrix_size}},
                        opencl::in<int*>{}, opencl::out<int*>{});

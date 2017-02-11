@@ -92,18 +92,18 @@ public:
     return true;
   }
 
-  event_ptr event() {
+  inline event_ptr event() const {
     return event_;
   }
 
-  mem_ref() = delete;
-  mem_ref(mem_ref&&) = default;
-  mem_ref(const mem_ref&) = default;
-  ~mem_ref() {
-    // device management ?
+  mem_ref()
+    : input_size_{0},
+      result_size_{0},
+      device_{nullptr},
+      event_{nullptr},
+      memory_{nullptr} {
+    // nop
   }
-
-private:
   mem_ref(std::vector<T> data, device* dev, mem_ptr memory, event_ptr event,
           optional<size_t> size = none)
     : input_size_{data.size()},
@@ -114,7 +114,6 @@ private:
     if (size)
       result_size_ = *size;
   }
-
   mem_ref(std::vector<T> data, device* dev, cl_mem memory, event_ptr event,
           optional<size_t> size = none)
     : input_size_{data.size()},
@@ -125,7 +124,45 @@ private:
     if (size)
       result_size_ = *size;
   }
+  mem_ref(mem_ref&& other)
+    : input_size_{std::move(other.input_size_)},
+      result_size_{std::move(other.result_size_)},
+      device_{std::move(other.device_)},
+      event_{std::move(other.event_)},
+      memory_{std::move(other.memory_)} {
+    // nop
+  }
+  mem_ref& operator=(mem_ref&& other) {
+    input_size_  = std::move(other.input_size_);
+    result_size_ = std::move(other.result_size_);
+    device_      = std::move(other.device_);
+    event_       = std::move(other.event_);
+    memory_      = std::move(other.memory_);
+    return *this;
+  }
+  mem_ref(const mem_ref& other)
+    : input_size_{other.input_size_},
+      result_size_{other.result_size_},
+      device_{other.device_},
+      event_{other.event_},
+      memory_{other.memory_} {
+    // nop
+  }
+  mem_ref& operator=(const mem_ref& other) {
+    if (&other == this)
+      return *this;
+    input_size_  = other.input_size_;
+    result_size_ = other.result_size_;
+    device_      = other.device_;
+    event_       = other.event_;
+    memory_      = other.memory_;
+    return *this;
+  }
+  ~mem_ref() {
+    // management ?
+  }
 
+private:
   void set_event(event_ptr event) {
     event_ = event;
   }
@@ -134,7 +171,7 @@ private:
   size_t result_size_;
   buffer_type type_;
   device* device_;
-  event_ptr event_;
+  event_ptr event_; // TODO: use vector, regular cleanup of CL_COMPLETE events
   mem_ptr memory_;
 };
 

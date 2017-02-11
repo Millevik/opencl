@@ -22,14 +22,18 @@
 
 #include "caf/all.hpp"
 
+#include "caf/detail/int_list.hpp"
+#include "caf/detail/type_list.hpp"
+#include "caf/detail/limited_vector.hpp"
+
 #include "caf/opencl/global.hpp"
-#include "caf/opencl/command.hpp" // TODO: need our own command?
 #include "caf/opencl/mem_ref.hpp"
 #include "caf/opencl/program.hpp"
 #include "caf/opencl/arguments.hpp"
 #include "caf/opencl/smart_ptr.hpp"
 #include "caf/opencl/opencl_err.hpp"
 #include "caf/opencl/spawn_config.hpp"
+#include "caf/opencl/phase_command.hpp"
 
 namespace caf {
 namespace opencl {
@@ -50,6 +54,24 @@ struct as_mem_ref<T*> {
   using type = mem_ref<T>;
 };
 
+// derive signature of suitable phase_command
+template <class T, class List>
+struct phase_command_signature;
+
+template <class T, class... Ts>
+struct phase_command_signature<T, detail::type_list<Ts...>> {
+  using type = phase_command<T, Ts...>;
+};
+
+// derive type for a tuple matching the arguments as mem_refs
+template <class List>
+struct tuple_mem_ref_type;
+
+template <class... Ts>
+struct tuple_mem_ref_type<detail::type_list<Ts...>> {
+  using type = std::tuple<Ts...>;
+};
+
 template <class... Ts>
 class actor_facade_phase : public monitorable_actor {
 public:
@@ -65,7 +87,10 @@ public:
   using size_vec = std::vector<size_t>;
 
   using command_type =
-    typename command_sig_from_outputs<actor_facade_phase, mem_ref_types>::type;
+    typename phase_command_signature<actor_facade_phase, mem_ref_types>::type;
+
+  using tuple_type = 
+    typename tuple_mem_ref_type<mem_ref_types>::type;
 
   const char* name() const override {
     return "OpenCL phase actor";
@@ -114,7 +139,7 @@ public:
     if (!content.match_elements(mem_ref_types{}))
       return;
     std::vector<cl_event> events;
-    std::tuple<mem_ref_types> refs;
+    tuple_type refs;
     set_kernel_arguments(content, refs, events, indices);
     auto hdl = std::make_tuple(sender, mid.response_id());
     auto cmd = make_counted<command_type>(std::move(hdl),
@@ -143,22 +168,23 @@ public:
   }
 
 
-  void set_kernel_arguments(message&, std::tuple<mem_ref_types>&,
-                            std::vector<cl_event>&, detail::int_list<>) {
+  void set_kernel_arguments(message&, tuple_type&, std::vector<cl_event>&,
+                            detail::int_list<>) {
     // nop
   }
 
   template <long I, long... Is>
-  void set_kernel_arguments(message& msg, std::tuple<mem_ref_types>& refs,
+  void set_kernel_arguments(message& msg, tuple_type& refs,
                             std::vector<cl_event>& events,
                             detail::int_list<I, Is...>) {
     using mem_type = typename detail::tl_at<mem_ref_types, I>::type;
-    auto& value = msg.get_as<mem_type>(I);
-    events.push_back(value.event().get());
-    get<I>(refs) = value;
+    auto mem = msg.get_as<mem_type>(I);
+    events.push_back(mem.event().get());
+    get<I>(refs) = mem;
     // TODO: add support for local arguments
+    // (require buffer size instead of cl_mem size)
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
-             sizeof(cl_mem), static_cast<void*>(&value.get()));
+             sizeof(cl_mem), static_cast<void*>(&mem.get()));
   }
 
   kernel_ptr kernel_;
