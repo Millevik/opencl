@@ -181,6 +181,8 @@ public:
     auto mem = msg.get_as<mem_type>(I);
     events.push_back(mem.event().get());
     get<I>(refs) = mem;
+    // TODO: check if device used for execution is the same as for the 
+    //       mem_ref, should we try to transfer memory in such cases?
     // TODO: add support for local arguments
     // (require buffer size instead of cl_mem size)
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),

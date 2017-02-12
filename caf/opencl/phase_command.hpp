@@ -108,6 +108,7 @@ public:
 private:
   void handle_results() {
     // TODO: problem is here with message_from_results
+    // message type not announced?
     auto msg = message_from_results{}(refs_);
     get<0>(handle_)->enqueue(actor_facade_, get<1>(handle_), std::move(msg),
                              nullptr);
