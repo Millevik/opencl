@@ -78,10 +78,24 @@ public:
   // OpenCL functionality
 
   /// @brief Factory method, that creates a caf::opencl::program
+  ///        reading the source from given @p path.
+  /// @returns A program object.
+  program create_program_from_file(const char* path,
+                                   const char* options = nullptr,
+                                   uint32_t device_id = 0);
+
+  /// @brief Factory method, that creates a caf::opencl::program
   ///        from a given @p kernel_source.
   /// @returns A program object.
   program create_program(const char* kernel_source,
                          const char* options = nullptr, uint32_t device_id = 0);
+
+  /// @brief Factory method, that creates a caf::opencl::program
+  ///        reading the source from given @p path.
+  /// @returns A program object.
+  program create_program_from_file(const char* path,
+                                   const char* options,
+                                   const device& dev);
 
   /// @brief Factory method, that creates a caf::opencl::program
   ///        from a given @p kernel_source.

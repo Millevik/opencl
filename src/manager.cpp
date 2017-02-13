@@ -18,6 +18,8 @@
  * http://www.boost.org/LICENSE_1_0.txt.                                      *
  ******************************************************************************/
 
+#include <fstream>
+
 #include "caf/detail/type_list.hpp"
 
 #include "caf/opencl/device.hpp"
@@ -81,6 +83,25 @@ actor_system::module* manager::make(actor_system& sys,
   return new manager{sys};
 }
 
+program manager::create_program_from_file(const char* path, const char* options,
+                                          uint32_t device_id) {
+  std::ifstream read_source{std::string(path), std::ios::in};
+  string kernel_source;
+  if (read_source) {
+    read_source.seekg(0, std::ios::end);
+    kernel_source.resize(read_source.tellg());
+    read_source.seekg(0, std::ios::beg);
+    read_source.read(&kernel_source[0], kernel_source.size());
+    read_source.close();
+  } else {
+    ostringstream oss;
+    oss << "No file at '" << path << "' found.";
+    CAF_LOG_ERROR(CAF_ARG(oss.str()));
+    throw runtime_error(oss.str());
+  }  
+  return create_program(kernel_source.c_str(), options, device_id);
+}
+
 program manager::create_program(const char* kernel_source, const char* options,
                                  uint32_t device_id) {
   auto dev = get_device(device_id);
@@ -91,6 +112,26 @@ program manager::create_program(const char* kernel_source, const char* options,
     throw runtime_error(oss.str());
   }
   return create_program(kernel_source, options, *dev);
+}
+
+program manager::create_program_from_file(const char* path,
+                                          const char* options,
+                                          const device& dev) {
+  std::ifstream read_source{std::string(path), std::ios::in};
+  string kernel_source;
+  if (read_source) {
+    read_source.seekg(0, std::ios::end);
+    kernel_source.resize(read_source.tellg());
+    read_source.seekg(0, std::ios::beg);
+    read_source.read(&kernel_source[0], kernel_source.size());
+    read_source.close();
+  } else {
+    ostringstream oss;
+    oss << "No file at '" << path << "' found.";
+    CAF_LOG_ERROR(CAF_ARG(oss.str()));
+    throw runtime_error(oss.str());
+  }  
+  return create_program(kernel_source.c_str(), options, dev);
 }
 
 program manager::create_program(const char* kernel_source, const char* options,
