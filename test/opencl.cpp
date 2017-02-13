@@ -18,6 +18,12 @@ using namespace caf::opencl;
 
 using caf::detail::limited_vector;
 
+// required to allow sending mem_ref<int> in messages
+namespace caf {
+  template <>
+  struct allowed_unsafe_message_type<mem_ref<int>> : std::true_type {};
+}
+
 namespace {
 
 using ivec = vector<int>;
@@ -448,25 +454,35 @@ void test_phases(actor_system& sys) {
   ivec expected{input};
   for_each(begin(expected), end(expected), [](int& val) { val *= 2; });
   auto prog   = mngr.create_program(kernel_source_inout, "", dev);
-  auto conf   = spawn_config{dims{matrix_size, matrix_size}};
+  auto conf   = spawn_config{dims{input.size()}};
   auto worker = mngr.spawn_phase<int*>(prog, kernel_name_inout, conf);
-/*
-  auto w1 = mngr.spawn(mngr.create_program(kernel_source, "", dev), kernel_name,
-                       opencl::spawn_config{dims{matrix_size, matrix_size}},
-                       opencl::in<int*>{}, opencl::out<int*>{});
-  self->send(w1, make_iota_vector<int>(matrix_size * matrix_size));
-  self->receive (
-    [&](const ivec& result) {
-      check_vector_results("Simple matrix multiplication using vectors"
-                           "(kernel wrapped in program)",
-                           expected1, result);
+  auto buf    = dev.copy_to_device(buffer_type::input_output, input);
+  CAF_CHECK(buf.size(), input.size());
+  self->send(worker, buf);
+  self->receive(
+    [&](mem_ref<int>& ref) {
+      auto res = ref.data();
+      CAF_CHECK(res);
+      check_vector_results("Testing phase one", expected, *res);
     },
     others >> [&](message_view& x) -> result<message> {
       CAF_ERROR("unexpected message" << x.content().stringify());
       return sec::unexpected_message;
     }
   );
-  */
+  for_each(begin(expected), end(expected), [](int& val) { val *= 2; });
+  self->send(worker, buf);
+  self->receive(
+    [&](mem_ref<int>& ref) {
+      auto res = ref.data();
+      CAF_CHECK(res);
+      check_vector_results("Testing phase one", expected, *res);
+    },
+    others >> [&](message_view& x) -> result<message> {
+      CAF_ERROR("unexpected message" << x.content().stringify());
+      return sec::unexpected_message;
+    }
+  );
 }
 
 CAF_TEST(opencl_basics) {

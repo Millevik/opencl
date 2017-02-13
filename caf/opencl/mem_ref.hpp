@@ -44,11 +44,6 @@ template <class T>
 class mem_ref : public ref_counted {
 public:
   friend class device;
-  template <class Inspector, class U>
-  typename Inspector::result_type inspect(Inspector& f, mem_ref<U>& x) {
-    return f(meta::type_name("mem_ref"), x.input_size_, x.result_size_,
-             x.type_, x.device_, x.event_, x.memory_);
-  }
 
   expected<std::vector<T>> data(optional<size_t> result_size = none) {
     if (result_size && *result_size > input_size_)
@@ -73,11 +68,9 @@ public:
     // sends the results to dst with the marker atom
     throw std::runtime_error("Asynchronous mem_ref::data() not implemented");
   }
-  */
 
-  /*
   void move_to(device* dev) {
-    // TODO: implement
+    // move buffer to different device
   }
   */
 
