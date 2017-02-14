@@ -56,7 +56,8 @@ public:
   }
 
   ~phase_command() {
-    clReleaseEvent(exec_);
+    if (exec_)
+      clReleaseEvent(exec_);
   }
 
   void enqueue() {
@@ -81,7 +82,8 @@ public:
     if (err != CL_SUCCESS) {
       CAF_LOG_ERROR("clEnqueueNDRangeKernel: "
                     << CAF_ARG(get_opencl_error(err)));
-      clReleaseEvent(exec_);
+      if (exec_)
+        clReleaseEvent(exec_);
       this->deref();
       return;
     }
@@ -96,7 +98,8 @@ public:
                              this);
     if (err != CL_SUCCESS) {
       CAF_LOG_ERROR("clSetEventCallback: " << CAF_ARG(get_opencl_error(err)));
-      clReleaseEvent(exec_);
+      if (exec_)
+        clReleaseEvent(exec_);
       this->deref(); // callback is not set
       return;
     }

@@ -53,13 +53,17 @@ public:
     if (requires_transfer) {
       event.reset(v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
                                   queue_.get(), buffer, blocking,
-                                  cl_uint{0}, buffer_size, data.data()));
+                                  cl_uint{0}, buffer_size, data.data()),
+                  false);
     } else {
-      event.reset(v2get(CAF_CLF(clCreateUserEvent), context_.get()));
-      v1callcl(CAF_CLF(clSetUserEventStatus), event.get(), CL_COMPLETE);
+      event.reset();
+      //event.reset(v2get(CAF_CLF(clCreateUserEvent), context_.get()),
+      //            false);
+      //v1callcl(CAF_CLF(clSetUserEventStatus), event.get(), CL_COMPLETE);
     }
-    return mem_ref<T>{std::move(data), this, buffer, event, size};
-    // TODO: save reef to mem_ref and clean up on destruction?
+    return mem_ref<T>{std::move(data), this, std::move(buffer),
+                      std::move(event), size};
+    // TODO: save ref to mem_ref and clean up on destruction?
   }
 
   /// Intialize a new device in a context using a sepcific device_id

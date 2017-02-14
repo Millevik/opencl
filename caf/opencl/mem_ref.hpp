@@ -46,20 +46,32 @@ public:
   friend class device;
 
   expected<std::vector<T>> data(optional<size_t> result_size = none) {
+    if (!memory_)
+      return make_error(sec::runtime_error, "No memory assigned.");
     if (result_size && *result_size > input_size_)
-      return make_error(sec::runtime_error, "Cannot read more than buffer size.");
+      return make_error(sec::runtime_error, "Buffer has less elements.");
     command_queue_ptr queue = device_->queue_;
     auto num_values = (result_size ? *result_size : result_size_);
     auto buffer_size = sizeof(T) * num_values;
     std::vector<T> buffer(num_values);
     cl_event event;
-    auto prev_event = event_.get();
+    std::vector<cl_event> prev_events;
+    if (event_)
+      prev_events.push_back(event_.get());
     auto err = clEnqueueReadBuffer(queue.get(), memory_.get(), CL_TRUE,
                                    0, buffer_size, buffer.data(),
-                                   1, &prev_event, &event);
+                                   prev_events.size(), prev_events.data(),
+                                   &event);
     if (err != CL_SUCCESS)
       return make_error(sec::runtime_error, get_opencl_error(err));
     return buffer;
+  }
+
+  void reset() {
+    input_size_ = 0;
+    result_size_ = 0;
+    event_.reset();
+    memory_.reset();
   }
 
   /*
