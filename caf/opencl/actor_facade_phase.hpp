@@ -179,7 +179,9 @@ public:
                             detail::int_list<I, Is...>) {
     using mem_type = typename detail::tl_at<mem_ref_types, I>::type;
     auto mem = msg.get_as<mem_type>(I);
-    events.push_back(mem.event().get());
+    auto event = mem.event();
+    if (event)
+      events.push_back(event.get());
     get<I>(refs) = mem;
     // TODO: check if device used for execution is the same as for the 
     //       mem_ref, should we try to transfer memory in such cases?
@@ -187,6 +189,7 @@ public:
     // (require buffer size instead of cl_mem size)
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              sizeof(cl_mem), static_cast<void*>(&mem.get()));
+    set_kernel_arguments(msg, refs, events, detail::int_list<Is...>{});
   }
 
   kernel_ptr kernel_;
