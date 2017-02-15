@@ -456,7 +456,7 @@ void test_phases(actor_system& sys) {
   auto prog   = mngr.create_program(kernel_source_inout, "", dev);
   auto conf   = spawn_config{dims{input.size()}};
   auto worker = mngr.spawn_phase<int*>(prog, kernel_name_inout, conf);
-  auto buf    = dev.copy_to_device(buffer_type::input_output, input);
+  auto buf    = dev.global_buffer(buffer_type::input_output, input);
   CAF_CHECK(buf.size(), input.size());
   self->send(worker, buf);
   self->receive(
@@ -504,9 +504,8 @@ CAF_TEST(opencl_mem_refs) {
   CAF_REQUIRE(opt);
   auto dev = *opt;
   vector<uint32_t> input{1, 2, 3, 4};
-  auto buf_1 = dev.copy_to_device(buffer_type::input_output, input);
+  auto buf_1 = dev.global_buffer(buffer_type::input_output, input);
   CAF_CHECK_EQUAL(buf_1.size(), input.size());
-  CAF_CHECK_EQUAL(buf_1.result_size(), input.size());
   auto res_1 = buf_1.data();
   CAF_CHECK(res_1);
   CAF_CHECK_EQUAL(res_1->size(), input.size());
@@ -517,10 +516,9 @@ CAF_TEST(opencl_mem_refs) {
   CAF_CHECK_EQUAL((*res_2)[0], input[0]);
   CAF_CHECK_EQUAL((*res_2)[1], input[1]);
   vector<uint32_t> new_input{1,2,3,4,5};
-  buf_1 = dev.copy_to_device(buffer_type::input_output, new_input);
+  buf_1 = dev.global_buffer(buffer_type::input_output, new_input);
   auto res_3 = buf_1.data();
   CAF_CHECK_EQUAL(buf_1.size(), new_input.size());
-  CAF_CHECK_EQUAL(buf_1.result_size(), new_input.size());
   buf_1.reset();
   auto res_4 = buf_1.data();
   CAF_CHECK(!res_4);

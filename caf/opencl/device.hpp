@@ -30,6 +30,13 @@
 namespace caf {
 namespace opencl {
 
+enum buffer_type : cl_mem_flags {
+  input         = CL_MEM_READ_WRITE | CL_MEM_HOST_WRITE_ONLY,
+  input_output  = CL_MEM_READ_WRITE,
+  output        = CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY,
+  scratch_space = CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS
+};
+
 class program;
 class manager;
 template <class T> class mem_ref;
@@ -41,28 +48,37 @@ public:
   template <class T> friend class mem_ref;
 
   template <class T>
-  mem_ref<T> copy_to_device(cl_mem_flags flags, const std::vector<T>& data,
-                            optional<size_t> size = none,
-                            cl_bool blocking = CL_FALSE) {
-    bool requires_transfer = !data.empty();
-    size_t num_elements = size ? *size : data.size();
+  mem_ref<T> global_buffer(cl_mem_flags flags, const std::vector<T>& data,
+                           cl_bool blocking = CL_FALSE) {
+    size_t num_elements = data.size();
     size_t buffer_size = sizeof(T) * num_elements;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(), flags,
                         buffer_size, nullptr);
     event_ptr event;
-    if (requires_transfer) {
+    if (!data.empty())
       event.reset(v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
                                   queue_.get(), buffer, blocking,
                                   cl_uint{0}, buffer_size, data.data()),
                   false);
-    } else {
-      event.reset();
-      //event.reset(v2get(CAF_CLF(clCreateUserEvent), context_.get()),
-      //            false);
-      //v1callcl(CAF_CLF(clSetUserEventStatus), event.get(), CL_COMPLETE);
-    }
-    return mem_ref<T>{std::move(data), this, std::move(buffer),
-                      std::move(event), size};
+    return mem_ref<T>{num_elements, this, std::move(buffer), std::move(event)};
+  }
+
+  template <class T>
+  mem_ref<T> scratch_space(size_t size,
+                           cl_mem_flags flags = buffer_type::scratch_space) {
+    auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(), flags,
+                        sizeof(T) * size, nullptr);
+    return mem_ref<T>{size, this, std::move(buffer), nullptr};
+  }
+
+  template <class T>
+  mem_ref<T> local_buffer(cl_mem_flags flags, size_t size) {
+    size_t buffer_size = sizeof(T) * size;
+    auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(), flags,
+                        buffer_size, nullptr);
+    event_ptr event;
+    event.reset();
+    return mem_ref<T>{size, this, std::move(buffer), std::move(event)};
     // TODO: save ref to mem_ref and clean up on destruction?
   }
 
