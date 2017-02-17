@@ -156,6 +156,21 @@ public:
     // management ?
   }
 
+  void swap(mem_ref<T>& other) {
+    std::swap(num_elements_, other.num_elements_);
+    std::swap(is_local_, other.is_local_);
+    std::swap(type_, other.type_);
+    std::swap(device_, other.device_);
+    event_.swap(other.event_);
+    memory_.swap(other.memory_);
+    // auto tmp1 = other.event_;
+    // other.event_ = event_;
+    // event_ = tmp1;
+    // auto tmp2 = other.memory_;
+    // other.memory_ = memory_;
+    // event_ = tmp2;
+  }
+
 private:
   void set_event(event_ptr event) {
     event_ = event;
