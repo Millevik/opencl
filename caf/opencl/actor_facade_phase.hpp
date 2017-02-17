@@ -187,6 +187,10 @@ public:
     //       mem_ref, should we try to transfer memory in such cases?
     // TODO: add support for local arguments
     // (require buffer size instead of cl_mem size)
+    if (mem.is_local())
+    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
+             sizeof(typename mem_type::value_type) * mem.size(), nullptr);
+    else
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              sizeof(cl_mem), static_cast<void*>(&mem.get()));
     set_kernel_arguments(msg, refs, events, detail::int_list<Is...>{});

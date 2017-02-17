@@ -43,6 +43,8 @@ public:
   expected<std::vector<T>> data(optional<size_t> result_size = none) {
     if (!memory_)
       return make_error(sec::runtime_error, "No memory assigned.");
+    if (is_local_)
+      return make_error(sec::runtime_error, "Cannot read local memory");
     if (result_size && *result_size > num_elements_)
       return make_error(sec::runtime_error, "Buffer has less elements.");
     command_queue_ptr queue = device_->queue_;
@@ -84,27 +86,33 @@ public:
   }
   */
 
-  inline const mem_ptr&  get()   const { return memory_;       }
-  inline       mem_ptr&  get()         { return memory_;       }
-  inline       size_t    size()  const { return num_elements_; }
-  inline       event_ptr event() const { return event_;        }
+  inline const mem_ptr&  get()      const { return memory_;       }
+  inline       mem_ptr&  get()            { return memory_;       }
+  inline       size_t    size()     const { return num_elements_; }
+  inline       event_ptr event()    const { return event_;        }
+  inline       bool      is_local() const { return is_local_;     }
 
   mem_ref()
     : num_elements_{0},
+      is_local_{false},
       device_{nullptr},
       event_{nullptr},
       memory_{nullptr} {
     // nop
   }
-  mem_ref(size_t num_elements, device* dev, mem_ptr memory, event_ptr event)
+  mem_ref(size_t num_elements, bool is_local, device* dev, mem_ptr memory,
+          event_ptr event)
     : num_elements_{num_elements},
+      is_local_{is_local},
       device_{dev},
       event_{event},
       memory_{memory} {
     // nop
   }
-  mem_ref(size_t num_elements, device* dev, cl_mem memory, event_ptr event)
+  mem_ref(size_t num_elements, bool is_local, device* dev, cl_mem memory,
+          event_ptr event)
     : num_elements_{num_elements},
+      is_local_{is_local},
       device_{dev},
       event_{event},
       memory_{memory} {
@@ -112,6 +120,7 @@ public:
   }
   mem_ref(mem_ref&& other)
     : num_elements_{std::move(other.num_elements_)},
+      is_local_{std::move(other.is_local_)},
       device_{std::move(other.device_)},
       event_{std::move(other.event_)},
       memory_{std::move(other.memory_)} {
@@ -119,6 +128,7 @@ public:
   }
   mem_ref& operator=(mem_ref&& other) {
     num_elements_ = std::move(other.num_elements_);
+    is_local_ = std::move(other.is_local_);
     device_ = std::move(other.device_);
     event_ = std::move(other.event_);
     memory_ = std::move(other.memory_);
@@ -126,6 +136,7 @@ public:
   }
   mem_ref(const mem_ref& other)
     : num_elements_{other.num_elements_},
+      is_local_{other.is_local_},
       device_{other.device_},
       event_{other.event_},
       memory_{other.memory_} {
@@ -135,9 +146,10 @@ public:
     if (&other == this)
       return *this;
     num_elements_  = other.num_elements_;
-    device_      = other.device_;
-    event_       = other.event_;
-    memory_      = other.memory_;
+    is_local_ = other.is_local_;
+    device_ = other.device_;
+    event_ = other.event_;
+    memory_ = other.memory_;
     return *this;
   }
   ~mem_ref() {
@@ -150,6 +162,7 @@ private:
   }
 
   size_t num_elements_;
+  bool is_local_;
   buffer_type type_;
   device* device_;
   event_ptr event_; // TODO: use vector, regular cleanup of CL_COMPLETE events

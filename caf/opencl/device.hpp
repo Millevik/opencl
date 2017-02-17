@@ -60,7 +60,8 @@ public:
                                   queue_.get(), buffer, blocking,
                                   cl_uint{0}, buffer_size, data.data()),
                   false);
-    return mem_ref<T>{num_elements, this, std::move(buffer), std::move(event)};
+    return mem_ref<T>{num_elements, false, this, std::move(buffer),
+                      std::move(event)};
   }
 
   template <class T>
@@ -68,7 +69,7 @@ public:
                            cl_mem_flags flags = buffer_type::scratch_space) {
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(), flags,
                         sizeof(T) * size, nullptr);
-    return mem_ref<T>{size, this, std::move(buffer), nullptr};
+    return mem_ref<T>{size, false, this, std::move(buffer), nullptr};
   }
 
   template <class T>
@@ -78,7 +79,7 @@ public:
                         buffer_size, nullptr);
     event_ptr event;
     event.reset();
-    return mem_ref<T>{size, this, std::move(buffer), std::move(event)};
+    return mem_ref<T>{size, true, this, std::move(buffer), std::move(event)};
     // TODO: save ref to mem_ref and clean up on destruction?
   }
 
