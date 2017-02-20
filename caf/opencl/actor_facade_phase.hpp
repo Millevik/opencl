@@ -185,14 +185,30 @@ public:
     get<I>(refs) = mem;
     // TODO: check if device used for execution is the same as for the 
     //       mem_ref, should we try to transfer memory in such cases?
-    // TODO: add support for local arguments
-    // (require buffer size instead of cl_mem size)
-    if (mem.is_local())
-    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
-             sizeof(typename mem_type::value_type) * mem.size(), nullptr);
-    else
-    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
-             sizeof(cl_mem), static_cast<void*>(&mem.get()));
+    switch (mem.location()) {
+      case memory_location::local: {
+        v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(),
+                         static_cast<unsigned>(I),
+                         sizeof(typename mem_type::value_type) * mem.size(),
+                         nullptr);
+        break;
+      }
+      case memory_location::priv: {
+        auto val = mem.value();
+        CAF_ASSERT(val);
+        v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(),
+                         static_cast<unsigned>(I),
+                         sizeof(typename mem_type::value_type),
+                         static_cast<void*>(&val.value()));
+        break;
+      }
+      case memory_location::global: {
+        v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(),
+                         static_cast<unsigned>(I),
+                         sizeof(cl_mem), static_cast<void*>(&mem.get()));
+        break;
+      }
+    }
     set_kernel_arguments(msg, refs, events, detail::int_list<Is...>{});
   }
 

@@ -37,6 +37,10 @@ enum buffer_type : cl_mem_flags {
   scratch_space = CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS
 };
 
+enum memory_location {
+  global, local, priv
+};
+
 class program;
 class manager;
 template <class T> class mem_ref;
@@ -47,9 +51,11 @@ public:
   friend class manager;
   template <class T> friend class mem_ref;
 
+  /// Create an argument for an OpenCL kernel with data placed in global memory.
   template <class T>
-  mem_ref<T> global_buffer(cl_mem_flags flags, const std::vector<T>& data,
-                           cl_bool blocking = CL_FALSE) {
+  mem_ref<T> global_argument(const std::vector<T>& data,
+                             cl_mem_flags flags = buffer_type::input_output,
+                             cl_bool blocking = CL_FALSE) {
     size_t num_elements = data.size();
     size_t buffer_size = sizeof(T) * num_elements;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(), flags,
@@ -60,27 +66,34 @@ public:
                                   queue_.get(), buffer, blocking,
                                   cl_uint{0}, buffer_size, data.data()),
                   false);
-    return mem_ref<T>{num_elements, false, this, std::move(buffer),
-                      std::move(event)};
+    return mem_ref<T>{num_elements, memory_location::global, this,
+                      std::move(buffer), std::move(event)};
+    // TODO: save ref to mem_ref and clean up on destruction?
   }
 
+  /// Create an argument for an OpenCL kernel in gloabl memory without data.
   template <class T>
-  mem_ref<T> scratch_space(size_t size,
-                           cl_mem_flags flags = buffer_type::scratch_space) {
+  mem_ref<T> scratch_argument(size_t size,
+                              cl_mem_flags flags = buffer_type::scratch_space) {
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(), flags,
                         sizeof(T) * size, nullptr);
-    return mem_ref<T>{size, false, this, std::move(buffer), nullptr};
+    return mem_ref<T>{size, memory_location::global, this, std::move(buffer),
+                      nullptr};
+    // TODO: save ref to mem_ref and clean up on destruction?
   }
 
+  /// Create an argument for an OpenCL kernel that is located in local memory.
+  /// This argument cannot be accessed from the CPU context
   template <class T>
-  mem_ref<T> local_buffer(cl_mem_flags flags, size_t size) {
-    size_t buffer_size = sizeof(T) * size;
-    auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(), flags,
-                        buffer_size, nullptr);
-    event_ptr event;
-    event.reset();
-    return mem_ref<T>{size, true, this, std::move(buffer), std::move(event)};
-    // TODO: save ref to mem_ref and clean up on destruction?
+  mem_ref<T> local_argument(size_t size) {
+    return mem_ref<T>{size, memory_location::local, this, nullptr, nullptr};
+  }
+
+  /// Create a private argument, which is only a single value.
+  template <class T>
+  mem_ref<T> private_argument(T value) {
+    return mem_ref<T>(1, memory_location::priv, this, nullptr, nullptr,
+                      std::move(value));
   }
 
   /// Intialize a new device in a context using a sepcific device_id
