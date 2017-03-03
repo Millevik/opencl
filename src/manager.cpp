@@ -147,9 +147,7 @@ program manager::create_program(const char* kernel_source, const char* options,
              false);
   // build programm from program object
   auto dev_tmp = dev.device_id_.get();
-  // TODO: pass pfn_notify to clBuildProgram?
-  auto err = clBuildProgram(pptr.get(), 1, &dev_tmp, options,
-                            nullptr, nullptr);
+  auto err = clBuildProgram(pptr.get(), 1, &dev_tmp, options, nullptr, nullptr);
   if (err != CL_SUCCESS) {
     ostringstream oss;
     oss << "clBuildProgram: " << get_opencl_error(err);
@@ -168,8 +166,10 @@ program manager::create_program(const char* kernel_source, const char* options,
       clGetProgramBuildInfo(pptr.get(), dev_tmp, CL_PROGRAM_BUILD_LOG,
                             sizeof(char) * buildlog_buffer_size,
                             buffer.data(), nullptr);
-      oss << std::endl << "Build log:\n" << string(buffer.data())
-          << "\n#######################################";
+      ostringstream ss;
+      ss << "Build log:\n" << string(buffer.data())
+         << "\n#######################################";
+      CAF_LOG_ERROR(CAF_ARG(ss.str()));
     }
 #endif
     throw runtime_error(oss.str());
