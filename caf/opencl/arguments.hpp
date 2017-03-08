@@ -93,6 +93,58 @@ struct scratch {
   std::function<optional<size_t> (message&)> fun_;
 };
 
+/// Argument placed in local memory. Cannot be initalized from the CPU, but
+/// requires a size that is calculated depending on the input.
+template <class Arg>
+struct local {
+  local() = default;
+  template <class F>
+  local(F fun) {
+    fun_ = [fun](message& msg) -> optional<size_t> {
+      auto res = msg.apply(fun);
+      size_t result;
+      if (res) {
+        res->apply([&](size_t x) { result = x; });
+        return result;
+      }
+      return none;
+    };
+  }
+  optional<size_t> operator()(message& msg) const {
+    return fun_ ? fun_(msg) : 0UL;
+  }
+  std::function<optional<size_t> (message&)> fun_;
+};
+
+/// Argument placed in private memory. Requires a default value but can
+/// alternatively be calculated depending on the input, through a function
+/// passed to the constructor.
+template <class Arg>
+struct priv {
+  priv() = default;
+  template <class F>
+  priv(Arg val, F fun) {
+    fun_ = [fun](message& msg) -> optional<Arg> {
+      auto res = msg.apply(fun);
+      Arg result;
+      if (res) {
+        res->apply([&](Arg x) { result = x; });
+        return result;
+      }
+      return none;
+    };
+    value_ = val;
+  }
+  priv(Arg val) {
+    value_ = val;
+  }
+  optional<Arg> operator()(message& msg) const {
+    return fun_ ? fun_(msg) : value_;
+  }
+  Arg value_;
+  std::function<optional<Arg> (message&)> fun_;
+};
+
 ///Cconverts C arrays, i.e., pointers, to vectors.
 template <class T>
 struct carr_to_vec {
@@ -120,7 +172,13 @@ struct is_opencl_arg<out<T>> : std::true_type {};
 template <class T>
 struct is_opencl_arg<scratch<T>> : std::true_type {};
 
-/// Filter type lists for input arguments, in and in_out.
+template <class T>
+struct is_opencl_arg<local<T>> : std::true_type {};
+
+template <class T>
+struct is_opencl_arg<priv<T>> : std::true_type {};
+
+/// Filter type lists for input arguments
 template <class T>
 struct is_input_arg : std::false_type {};
 
@@ -130,7 +188,7 @@ struct is_input_arg<in<T>> : std::true_type {};
 template <class T>
 struct is_input_arg<in_out<T>> : std::true_type {};
 
-/// Filter type lists for output arguments, in_out and out.
+/// Filter type lists for output arguments
 template <class T>
 struct is_output_arg : std::false_type {};
 
@@ -140,7 +198,7 @@ struct is_output_arg<out<T>> : std::true_type {};
 template <class T>
 struct is_output_arg<in_out<T>> : std::true_type {};
 
-/// Filter for arguments that require size; out & scratch
+/// Filter for arguments that require size
 template <class T>
 struct requires_size_arg : std::false_type {};
 
@@ -149,6 +207,12 @@ struct requires_size_arg<out<T>> : std::true_type {};
 
 template <class T>
 struct requires_size_arg<scratch<T>> : std::true_type {};
+
+template <class T>
+struct requires_size_arg<local<T>> : std::true_type {};
+
+template <class T>
+struct requires_size_arg<priv<T>> : std::true_type {};
 
 /// extract types
 template <class T>
@@ -171,6 +235,16 @@ struct extract_type<out<T>> {
 
 template <class T>
 struct extract_type<scratch<T>> {
+  using type = typename std::decay<typename carr_to_vec<T>::type>::type;
+};
+
+template <class T>
+struct extract_type<local<T>> {
+  using type = typename std::decay<typename carr_to_vec<T>::type>::type;
+};
+
+template <class T>
+struct extract_type<priv<T>> {
   using type = typename std::decay<typename carr_to_vec<T>::type>::type;
 };
 

@@ -42,11 +42,11 @@ public:
 
   expected<std::vector<T>> data(optional<size_t> result_size = none) {
     switch (location_) {
-      case memory_location::local:
+      case placement::local_mem:
         return make_error(sec::runtime_error, "Cannot read local memory");
-      case memory_location::priv:
+      case placement::private_mem:
         return make_error(sec::runtime_error, "Cannot read private memory");
-      case memory_location::global: {
+      case placement::global_mem: {
         if (!memory_)
           return make_error(sec::runtime_error, "No memory assigned.");
         if (result_size && *result_size > num_elements_)
@@ -61,13 +61,14 @@ public:
           prev_events.push_back(event_.get());
         auto err = clEnqueueReadBuffer(queue.get(), memory_.get(), CL_TRUE,
                                        0, buffer_size, buffer.data(),
-                                       prev_events.size(), prev_events.data(),
-                                       &event);
+                                       static_cast<cl_uint>(prev_events.size()),
+                                       prev_events.data(), &event);
         if (err != CL_SUCCESS)
           return make_error(sec::runtime_error, get_opencl_error(err));
         return buffer;
       }
     }
+    return make_error(sec::runtime_error, "Unknown memory location");
   }
 
   void reset() {
@@ -93,12 +94,12 @@ public:
   }
   */
 
-  inline const mem_ptr&        get()      const { return memory_;       }
-  inline       mem_ptr&        get()            { return memory_;       }
-  inline       size_t          size()     const { return num_elements_; }
-  inline       event_ptr       event()    const { return event_;        }
-  inline       memory_location location() const { return location_;     }
-  inline       optional<T>     value()    const { return value_;        }
+  inline const mem_ptr&     get()      const { return memory_;       }
+  inline       mem_ptr&     get()            { return memory_;       }
+  inline       size_t       size()     const { return num_elements_; }
+  inline       event_ptr    event()    const { return event_;        }
+  inline       placement    location() const { return location_;     }
+  inline       optional<T>  value()    const { return value_;        }
 
   mem_ref()
     : num_elements_{0},
@@ -108,7 +109,7 @@ public:
       value_{none} {
     // nop
   }
-  mem_ref(size_t num_elements, memory_location location, device* dev,
+  mem_ref(size_t num_elements, placement location, device* dev,
           mem_ptr memory, event_ptr event, optional<T> value= none)
     : num_elements_{num_elements},
       location_{location},
@@ -118,7 +119,7 @@ public:
       value_{value} {
     // nop
   }
-  mem_ref(size_t num_elements, memory_location location, device* dev,
+  mem_ref(size_t num_elements, placement location, device* dev,
           cl_mem memory, event_ptr event, optional<T> value = none)
     : num_elements_{num_elements},
       location_{location},
@@ -128,47 +129,11 @@ public:
       value_{value} {
     // nop
   }
-  mem_ref(mem_ref&& other)
-    : num_elements_{std::move(other.num_elements_)},
-      location_{std::move(other.location_)},
-      device_{std::move(other.device_)},
-      event_{std::move(other.event_)},
-      memory_{std::move(other.memory_)},
-      value_{std::move(other.value_)} {
-    // nop
-  }
-  mem_ref& operator=(mem_ref&& other) {
-    num_elements_ = std::move(other.num_elements_);
-    location_ = std::move(other.location_);
-    device_ = std::move(other.device_);
-    event_ = std::move(other.event_);
-    memory_ = std::move(other.memory_);
-    value_ =  std::move(other.value_);
-    return *this;
-  }
-  mem_ref(const mem_ref& other)
-    : num_elements_{other.num_elements_},
-      location_{other.location_},
-      device_{other.device_},
-      event_{other.event_},
-      memory_{other.memory_},
-      value_{other.value_} {
-    // nop
-  }
-  mem_ref& operator=(const mem_ref& other) {
-    if (&other == this)
-      return *this;
-    num_elements_  = other.num_elements_;
-    location_ = other.location_;
-    device_ = other.device_;
-    event_ = other.event_;
-    memory_ = other.memory_;
-    value_ = other.value_;
-    return *this;
-  }
-  ~mem_ref() {
-    // management ?
-  }
+  mem_ref(mem_ref&& other) = default;
+  mem_ref& operator=(mem_ref&& other) = default;
+  mem_ref(const mem_ref& other) = default;
+  mem_ref& operator=(const mem_ref& other) = default;
+  ~mem_ref() = default;
 
   void swap(mem_ref<T>& other) {
     std::swap(num_elements_, other.num_elements_);
@@ -192,7 +157,7 @@ private:
   }
 
   size_t num_elements_;
-  memory_location location_;
+  placement location_;
   buffer_type type_;
   device* device_;
   event_ptr event_; // TODO: use vector, regular cleanup of CL_COMPLETE events

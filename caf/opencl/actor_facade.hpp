@@ -154,7 +154,7 @@ public:
     args_vec scratch_buffers;
     size_vec result_sizes;
     add_kernel_arguments(events, input_buffers, output_buffers, scratch_buffers,
-                         result_sizes, content, indices);
+                         result_sizes, content, 0u, indices);
     auto cmd = make_counted<command_type>(std::move(hdl),
                                           actor_cast<strong_actor_ptr>(this),
                                           std::move(events),
@@ -194,7 +194,7 @@ public:
   }
 
   void add_kernel_arguments(evnt_vec&, args_vec&, args_vec&, args_vec&,
-                            size_vec&, message&, detail::int_list<>) {
+                            size_vec&, message&, uint32_t, detail::int_list<>) {
     // nop
   }
 
@@ -204,21 +204,21 @@ public:
   template <long I, long... Is>
   void add_kernel_arguments(evnt_vec& events, args_vec& input_buffers,
                             args_vec& output_buffers, args_vec& scratch_buffers,
-                            size_vec& sizes,
-                            message& msg, detail::int_list<I, Is...>) {
+                            size_vec& sizes, message& msg, uint32_t pos,
+                            detail::int_list<I, Is...>) {
     create_buffer<I>(std::get<I>(argument_types_), events, sizes, input_buffers,
-                     output_buffers, scratch_buffers, msg);
+                     output_buffers, scratch_buffers, msg, pos);
     add_kernel_arguments(events, input_buffers, output_buffers, scratch_buffers,
-                         sizes, msg, detail::int_list<Is...>{});
+                         sizes, msg, pos, detail::int_list<Is...>{});
   }
 
   template <long I, class T>
   void create_buffer(const in<T>&, evnt_vec& events, size_vec&,
                      args_vec& input_buffers, args_vec&, args_vec&,
-                     message& msg) {
+                     message& msg, uint32_t& pos) {
     using container_type = typename detail::tl_at<unpacked_types, I>::type;
     using value_type = typename container_type::value_type;
-    auto& value = msg.get_as<container_type>(I);
+    auto& value = msg.get_as<container_type>(pos++);
     auto size = value.size();
     size_t buffer_size = sizeof(value_type) * size;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
@@ -238,10 +238,10 @@ public:
   template <long I, class T>
   void create_buffer(const in_out<T>&, evnt_vec& events, size_vec& sizes,
                      args_vec&, args_vec& output_buffers, args_vec&,
-                     message& msg) {
+                     message& msg, uint32_t& pos) {
     using container_type = typename detail::tl_at<unpacked_types, I>::type;
     using value_type = typename container_type::value_type;
-    auto& value = msg.get_as<container_type>(I);
+    auto& value = msg.get_as<container_type>(pos++);
     auto size = value.size();
     size_t buffer_size = sizeof(value_type) * size;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
@@ -261,7 +261,7 @@ public:
   template <long I, class T>
   void create_buffer(const out<T>& wrapper, evnt_vec&, size_vec& sizes,
                      args_vec&, args_vec& output_buffers, args_vec&,
-                     message& msg) {
+                     message& msg, uint32_t&) {
     using container_type = typename detail::tl_at<unpacked_types, I>::type;
     using value_type = typename container_type::value_type;
     auto size = get_size_for_argument(wrapper, msg, default_output_size_);
@@ -280,7 +280,7 @@ public:
   template <long I, class T>
   void create_buffer(const scratch<T>& wrapper, evnt_vec&, size_vec&,
                      args_vec&, args_vec&, args_vec& scratch_buffers,
-                     message& msg) {
+                     message& msg, uint32_t&) {
     using container_type = typename detail::tl_at<unpacked_types, I>::type;
     using value_type = typename container_type::value_type;
     auto size = get_size_for_argument(wrapper, msg, default_output_size_);
@@ -293,6 +293,18 @@ public:
     scratch_buffers.push_back(tmp);
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              sizeof(cl_mem), static_cast<void*>(&scratch_buffers.back()));
+  }
+
+  template <long I, class T>
+  void create_buffer(const local<T>& wrapper, evnt_vec&, size_vec&,
+                     args_vec&, args_vec&, args_vec&, message& msg,
+                     uint32_t&) {
+    using container_type = typename detail::tl_at<unpacked_types, I>::type;
+    using value_type = typename container_type::value_type;
+    auto size = get_size_for_argument(wrapper, msg, default_output_size_);
+    auto buffer_size = sizeof(value_type) * size;
+    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
+             buffer_size, nullptr);
   }
 
   template <class Fun>

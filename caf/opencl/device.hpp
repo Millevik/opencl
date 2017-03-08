@@ -23,7 +23,6 @@
 #include <vector>
 
 #include "caf/opencl/global.hpp"
-//#include "caf/opencl/mem_ref.hpp"
 #include "caf/opencl/smart_ptr.hpp"
 #include "caf/opencl/opencl_err.hpp"
 
@@ -37,8 +36,8 @@ enum buffer_type : cl_mem_flags {
   scratch_space = CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS
 };
 
-enum memory_location {
-  global, local, priv
+enum placement {
+  global_mem, local_mem, private_mem
 };
 
 class program;
@@ -55,8 +54,9 @@ public:
   template <class T>
   mem_ref<T> global_argument(const std::vector<T>& data,
                              cl_mem_flags flags = buffer_type::input_output,
+                             optional<size_t> size = none,
                              cl_bool blocking = CL_FALSE) {
-    size_t num_elements = data.size();
+    size_t num_elements = size ? *size : data.size();
     size_t buffer_size = sizeof(T) * num_elements;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(), flags,
                         buffer_size, nullptr);
@@ -66,7 +66,7 @@ public:
                                   queue_.get(), buffer, blocking,
                                   cl_uint{0}, buffer_size, data.data()),
                   false);
-    return mem_ref<T>{num_elements, memory_location::global, this,
+    return mem_ref<T>{num_elements, placement::global_mem, this,
                       std::move(buffer), std::move(event)};
     // TODO: save ref to mem_ref and clean up on destruction?
   }
@@ -77,7 +77,7 @@ public:
                               cl_mem_flags flags = buffer_type::scratch_space) {
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(), flags,
                         sizeof(T) * size, nullptr);
-    return mem_ref<T>{size, memory_location::global, this, std::move(buffer),
+    return mem_ref<T>{size, placement::global_mem, this, std::move(buffer),
                       nullptr};
     // TODO: save ref to mem_ref and clean up on destruction?
   }
@@ -86,13 +86,13 @@ public:
   /// This argument cannot be accessed from the CPU context
   template <class T>
   mem_ref<T> local_argument(size_t size) {
-    return mem_ref<T>{size, memory_location::local, this, nullptr, nullptr};
+    return mem_ref<T>{size, placement::local_mem, this, nullptr, nullptr};
   }
 
   /// Create a private argument, which is only a single value.
   template <class T>
   mem_ref<T> private_argument(T value) {
-    return mem_ref<T>(1, memory_location::priv, this, nullptr, nullptr,
+    return mem_ref<T>(1, placement::private_mem, this, nullptr, nullptr,
                       std::move(value));
   }
 

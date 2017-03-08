@@ -38,7 +38,7 @@ constexpr const char* kernel_name_compiler_flag = "compiler_flag";
 constexpr const char* kernel_name_reduce = "reduce";
 constexpr const char* kernel_name_const = "const_mod";
 constexpr const char* kernel_name_inout = "times_two";
-constexpr const char* kernel_name_buffer = "times_two";
+constexpr const char* kernel_name_scratch = "use_scratch";
 
 constexpr const char* compiler_flag = "-D CAF_OPENCL_TEST_FLAG";
 
@@ -54,29 +54,9 @@ constexpr const char* kernel_source = R"__(
     }
     output[x + y * size] = result;
   }
-)__";
 
-constexpr const char* kernel_source_error = R"__(
-  __kernel void missing(__global int*) {
-    size_t semicolon_missing
-  }
-)__";
-
-constexpr const char* kernel_source_compiler_flag = R"__(
-  __kernel void compiler_flag(__global int* input,
-                              __global int* output) {
-    size_t x = get_global_id(0);
-#   ifdef CAF_OPENCL_TEST_FLAG
-    output[x] = input[x];
-#   else
-    output[x] = 0;
-#   endif
-  }
-)__";
-
-// http://developer.amd.com/resources/documentation-articles/articles-whitepapers/
-// opencl-optimization-case-study-simple-reductions
-constexpr const char* kernel_source_reduce = R"__(
+// http://developer.amd.com/resources/documentation-articles/
+// articles-whitepapers/opencl-optimization-case-study-simple-reductions
   __kernel void reduce(__global int* buffer,
                        __global int* result) {
     __local int scratch[512];
@@ -95,30 +75,42 @@ constexpr const char* kernel_source_reduce = R"__(
       result[get_group_id(0)] = scratch[0];
     }
   }
-)__";
 
-constexpr const char* kernel_source_const = R"__(
   __kernel void const_mod(__constant int* input,
                           __global int* output) {
     size_t idx = get_global_id(0);
     output[idx] = input[0];
   }
-)__";
 
-constexpr const char* kernel_source_inout = R"__(
   __kernel void times_two(__global int* values) {
     size_t idx = get_global_id(0);
     values[idx] = values[idx] * 2;
   }
-)__";
 
-constexpr const char* kernel_source_buffer = R"__(
-  __kernel void times_two(__global int* values,
-                          __global int* buf) {
+  __kernel void use_scratch(__global int* values,
+                            __global int* buf) {
     size_t idx = get_global_id(0);
     buf[idx] = values[idx];
     buf[idx] += values[idx];
     values[idx] = buf[idx];
+  }
+)__";
+
+constexpr const char* kernel_source_error = R"__(
+  __kernel void missing(__global int*) {
+    size_t semicolon_missing
+  }
+)__";
+
+constexpr const char* kernel_source_compiler_flag = R"__(
+  __kernel void compiler_flag(__global int* input,
+                              __global int* output) {
+    size_t x = get_global_id(0);
+#   ifdef CAF_OPENCL_TEST_FLAG
+    output[x] = input[x];
+#   else
+    output[x] = 0;
+#   endif
   }
 )__";
 
@@ -238,39 +230,38 @@ void test_opencl(actor_system& sys) {
   auto opt = mngr.get_device_if([](const device&){ return true; });
   CAF_REQUIRE(opt);
   auto dev = *opt;
+  auto prog = mngr.create_program(kernel_source, "", dev);
   scoped_actor self{sys};
+  auto wrong_msg = [&](message_view& x) -> result<message> {
+    CAF_ERROR("unexpected message" << x.content().stringify());
+    return sec::unexpected_message;
+  };
   const ivec expected1{ 56,  62,  68,  74,
                        152, 174, 196, 218,
                        248, 286, 324, 362,
                        344, 398, 452, 506};
-  auto w1 = mngr.spawn(mngr.create_program(kernel_source, "", dev), kernel_name,
+  auto w1 = mngr.spawn(prog, kernel_name,
                        opencl::spawn_config{dims{matrix_size, matrix_size}},
                        opencl::in<int*>{}, opencl::out<int*>{});
   self->send(w1, make_iota_vector<int>(matrix_size * matrix_size));
   self->receive (
     [&](const ivec& result) {
       check_vector_results("Simple matrix multiplication using vectors"
-                           "(kernel wrapped in program)",
+                           " (kernel wrapped in program)",
                            expected1, result);
-    },
-    others >> [&](message_view& x) -> result<message> {
-      CAF_ERROR("unexpected message" << x.content().stringify());
-      return sec::unexpected_message;
-    }
+    }, others >> wrong_msg
   );
   opencl::spawn_config cfg2{dims{matrix_size, matrix_size}};
+  // Pass kernel directly to the actor
   auto w2 = mngr.spawn(kernel_source, kernel_name, cfg2,
                        opencl::in<int*>{}, opencl::out<int*>{});
   self->send(w2, make_iota_vector<int>(matrix_size * matrix_size));
   self->receive (
     [&](const ivec& result) {
-      check_vector_results("Simple matrix multiplication using vectors",
+      check_vector_results("Simple matrix multiplication using vectors"
+                           " (kernel passed directly)",
                            expected1, result);
-    },
-    others >> [&](message_view& x) -> result<message> {
-      CAF_ERROR("unexpected message" << x.content().stringify());
-      return sec::unexpected_message;
-    }
+    }, others >> wrong_msg
   );
   const matrix_type expected2(move(expected1));
   auto map_arg = [](message& msg) -> optional<message> {
@@ -284,6 +275,7 @@ void test_opencl(actor_system& sys) {
     return make_message(matrix_type{move(result)});
   };
   opencl::spawn_config cfg3{dims{matrix_size, matrix_size}};
+  // let the runtime choose the device
   auto w3 = mngr.spawn(mngr.create_program(kernel_source), kernel_name, cfg3,
                        map_arg, map_res,
                        opencl::in<int*>{}, opencl::out<int*>{});
@@ -293,14 +285,10 @@ void test_opencl(actor_system& sys) {
       check_vector_results("Matrix multiplication with user defined type "
                            "(kernel wrapped in program)",
                            expected2.data(), result.data());
-    },
-    others >> [&](message_view& x) -> result<message> {
-      CAF_ERROR("unexpected message" << x.content().stringify());
-      return sec::unexpected_message;
-    }
+    }, others >> wrong_msg
   );
   opencl::spawn_config cfg4{dims{matrix_size, matrix_size}};
-  auto w4 = mngr.spawn(kernel_source, kernel_name, cfg4,
+  auto w4 = mngr.spawn(prog, kernel_name, cfg4,
                        map_arg, map_res,
                        opencl::in<int*>{}, opencl::out<int*>{});
   self->send(w4, make_iota_matrix<matrix_size>());
@@ -308,140 +296,130 @@ void test_opencl(actor_system& sys) {
     [&](const matrix_type& result) {
       check_vector_results("Matrix multiplication with user defined type",
                            expected2.data(), result.data());
-    },
-    others >> [&](message_view& x) -> result<message> {
-      CAF_ERROR("unexpected message" << x.content().stringify());
-      return sec::unexpected_message;
-    }
+    }, others >> wrong_msg
   );
   CAF_MESSAGE("Expecting exception (compiling invalid kernel, "
               "semicolon is missing).");
   try {
-    /* auto create_error = */ mngr.create_program(kernel_source_error);
-  }
-  catch (const exception& exc) {
+    /* auto expected_error = */ mngr.create_program(kernel_source_error);
+  } catch (const exception& exc) {
     auto cond = (strcmp("clBuildProgram: CL_BUILD_PROGRAM_FAILURE",
                         exc.what()) == 0);
-      CAF_CHECK(cond);
-      if (!cond) {
-        CAF_ERROR("Wrong exception cought for program build failure.");
-      }
+   CAF_CHECK(cond);
+   if (!cond)
+     CAF_ERROR("Wrong exception cought for program build failure.");
   }
-  // test for opencl compiler flags
+  // create program with opencl compiler flags
   auto prog5 = mngr.create_program(kernel_source_compiler_flag, compiler_flag);
   opencl::spawn_config cfg5{dims{array_size}};
   auto w5 = mngr.spawn(prog5, kernel_name_compiler_flag, cfg5,
-                     opencl::in<int*>{}, opencl::out<int*>{});
+                       opencl::in<int*>{}, opencl::out<int*>{});
   self->send(w5, make_iota_vector<int>(array_size));
   auto expected3 = make_iota_vector<int>(array_size);
   self->receive (
     [&](const ivec& result) {
       check_vector_results("Passing compiler flags", expected3, result);
-    },
-    others >> [&](message_view& x) -> result<message> {
-      CAF_ERROR("unexpected message" << x.content().stringify());
-      return sec::unexpected_message;
-    }
+    }, others >> wrong_msg
   );
 
-  auto dev6 = mngr.get_device_if([](const device& d) {
-    return d.get_device_type() != cpu;
-  });
-  if (dev6) {
-    // test for manuel return size selection (max workgroup size 1d)
-    auto max_wg_size = min(dev6->get_max_work_item_sizes()[0], size_t{512});
-    auto reduce_buffer_size = static_cast<size_t>(max_wg_size) * 8;
-    auto reduce_local_size  = static_cast<size_t>(max_wg_size);
-    auto reduce_work_groups = reduce_buffer_size / reduce_local_size;
-    auto reduce_global_size = reduce_buffer_size;
-    auto reduce_result_size = reduce_work_groups;
-    ivec arr6(reduce_buffer_size);
-    int n = static_cast<int>(arr6.capacity());
-    generate(arr6.begin(), arr6.end(), [&]{ return --n; });
-    opencl::spawn_config cfg6{dims{reduce_global_size},
-                              dims{                  }, // no offset
-                              dims{reduce_local_size}};
-    auto get_result_size_6 = [reduce_result_size](const ivec&) {
-      return reduce_result_size;
-    };
-    auto w6 = mngr.spawn(mngr.create_program(kernel_source_reduce, "", *dev6),
-                         kernel_name_reduce, cfg6, opencl::in<ivec>{},
-                         opencl::out<ivec>{get_result_size_6});
-    self->send(w6, move(arr6));
-    auto wg_size_as_int = static_cast<int>(max_wg_size);
-    ivec expected4{wg_size_as_int * 7, wg_size_as_int * 6, wg_size_as_int * 5,
-                   wg_size_as_int * 4, wg_size_as_int * 3, wg_size_as_int * 2,
-                   wg_size_as_int    ,               0};
-    self->receive(
-      [&](const ivec& result) {
-        check_vector_results("Passing size for the output", expected4, result);
-      },
-      others >> [&](message_view& x) -> result<message> {
-        CAF_ERROR("unexpected message" << x.content().stringify());
-        return sec::unexpected_message;
-      }
-    );
-  }
+  // test for manuel return size selection (max workgroup size 1d)
+  auto max_wg_size = min(dev.get_max_work_item_sizes()[0], size_t{512});
+  auto reduce_buffer_size = static_cast<size_t>(max_wg_size) * 8;
+  auto reduce_local_size  = static_cast<size_t>(max_wg_size);
+  auto reduce_work_groups = reduce_buffer_size / reduce_local_size;
+  auto reduce_global_size = reduce_buffer_size;
+  auto reduce_result_size = reduce_work_groups;
+  ivec arr6(reduce_buffer_size);
+  int n = static_cast<int>(arr6.capacity());
+  generate(arr6.begin(), arr6.end(), [&]{ return --n; });
+  opencl::spawn_config cfg6{dims{reduce_global_size},
+                            dims{                  }, // no offset
+                            dims{reduce_local_size}};
+  auto result_size_6 = [reduce_result_size](const ivec&) {
+    return reduce_result_size;
+  };
+  auto w6 = mngr.spawn(prog, kernel_name_reduce, cfg6,
+                       opencl::in<ivec>{}, opencl::out<ivec>{result_size_6});
+  self->send(w6, move(arr6));
+  auto wg_size_as_int = static_cast<int>(max_wg_size);
+  ivec expected4{wg_size_as_int * 7, wg_size_as_int * 6, wg_size_as_int * 5,
+                 wg_size_as_int * 4, wg_size_as_int * 3, wg_size_as_int * 2,
+                 wg_size_as_int    ,               0};
+  self->receive(
+    [&](const ivec& result) {
+      check_vector_results("Passing size for the output", expected4, result);
+    }, others >> wrong_msg
+  );
   // calculator function for getting the size of the output
-  auto get_result_size_7 = [=](const ivec&) {
+  auto result_size_7 = [=](const ivec&) {
     return problem_size;
   };
   // constant memory arguments
   const ivec arr7{problem_size};
-  auto w7 = mngr.spawn(kernel_source_const, kernel_name_const,
+  auto w7 = mngr.spawn(kernel_source, kernel_name_const,
                        opencl::spawn_config{dims{problem_size}},
                        opencl::in<ivec>{},
-                       opencl::out<ivec>{get_result_size_7});
+                       opencl::out<ivec>{result_size_7});
   self->send(w7, move(arr7));
   ivec expected5(problem_size);
   fill(begin(expected5), end(expected5), static_cast<int>(problem_size));
   self->receive(
     [&](const ivec& result) {
       check_vector_results("Using const input argument", expected5, result);
-    },
-    others >> [&](message_view& x) -> result<message> {
-      CAF_ERROR("unexpected message" << x.content().stringify());
-      return sec::unexpected_message;
-    }
+    }, others >> wrong_msg
   );
-  // test in_out argument type
+}
+
+void test_arguments(actor_system& sys) {
+  auto& mngr = sys.opencl_manager();
+  auto opt = mngr.get_device_if([](const device&){ return true; });
+  CAF_REQUIRE(opt);
+  auto dev = *opt;
+  scoped_actor self{sys};
+  auto wrong_msg = [&](message_view& x) -> result<message> {
+    CAF_ERROR("unexpected message" << x.content().stringify());
+    return sec::unexpected_message;
+  };
+  const ivec expected1{ 56,  62,  68,  74,   152, 174, 196, 218,
+                       248, 286, 324, 362,   344, 398, 452, 506};
+  auto w1 = mngr.spawn(mngr.create_program(kernel_source, "", dev), kernel_name,
+                       opencl::spawn_config{dims{matrix_size, matrix_size}},
+                       opencl::in<int*>{}, opencl::out<int*>{});
+  self->send(w1, make_iota_vector<int>(matrix_size * matrix_size));
+  self->receive (
+    [&](const ivec& result) {
+      check_vector_results("arguments: from in to out", expected1, result);
+    }, others >> wrong_msg
+  );
   ivec input9 = make_iota_vector<int>(problem_size);
   ivec expected9{input9};
   for_each(begin(expected9), end(expected9), [](int& val){ val *= 2; });
-  auto w9 = mngr.spawn(kernel_source_inout, kernel_name_inout,
+  auto w9 = mngr.spawn(kernel_source, kernel_name_inout,
                        spawn_config{dims{problem_size}},
                        opencl::in_out<ivec>{});
   self->send(w9, move(input9));
   self->receive(
     [&](const ivec& result) {
       check_vector_results("Testing in_out arugment", expected9, result);
-    },
-    others >> [&](message_view& x) -> result<message> {
-      CAF_ERROR("unexpected message" << x.content().stringify());
-      return sec::unexpected_message;
-    }
+    }, others >> wrong_msg
   );
-  // test buffer argument type
   ivec input10 = make_iota_vector<int>(problem_size);
   ivec expected10{input10};
   for_each(begin(expected10), end(expected10), [](int& val){ val *= 2; });
-  auto get_result_size_10 = [=](const ivec& input) {
-    return input.size();
-  };
-  auto w10 = mngr.spawn(kernel_source_buffer, kernel_name_buffer,
+  auto result_size_10 = [=](const ivec& input) { return input.size(); };
+  auto w10 = mngr.spawn(kernel_source, kernel_name_scratch,
                         spawn_config{dims{problem_size}},
                         opencl::in_out<ivec>{},
-                        opencl::scratch<ivec>{get_result_size_10});
+                        opencl::scratch<ivec>{result_size_10});
   self->send(w10, move(input10));
   self->receive(
     [&](const ivec& result) {
       check_vector_results("Testing buffer arugment", expected10, result);
-    },
-    others >> [&](message_view& x) -> result<message> {
-      CAF_ERROR("unexpected message" << x.content().stringify());
-      return sec::unexpected_message;
-    }
+    }, others >> wrong_msg
   );
+  // TODO: test local
+  // TODO: test different argument order, i.e., output before input
+  // TODO: implement and test private argument
 }
 
 void test_phases(actor_system& sys) {
@@ -450,10 +428,14 @@ void test_phases(actor_system& sys) {
   CAF_REQUIRE(opt);
   auto dev = *opt;
   scoped_actor self{sys};
+  auto wrong_msg = [&](message_view& x) -> result<message> {
+    CAF_ERROR("unexpected message" << x.content().stringify());
+    return sec::unexpected_message;
+  };
   ivec input = make_iota_vector<int>(problem_size);
   ivec expected{input};
   for_each(begin(expected), end(expected), [](int& val) { val *= 2; });
-  auto prog   = mngr.create_program(kernel_source_inout, "", dev);
+  auto prog   = mngr.create_program(kernel_source, "", dev);
   auto conf   = spawn_config{dims{input.size()}};
   auto worker = mngr.spawn_phase<int*>(prog, kernel_name_inout, conf);
   auto buf    = dev.global_argument(input, buffer_type::input_output);
@@ -464,11 +446,7 @@ void test_phases(actor_system& sys) {
       auto res = ref.data();
       CAF_CHECK(res);
       check_vector_results("Testing phase one", expected, *res);
-    },
-    others >> [&](message_view& x) -> result<message> {
-      CAF_ERROR("unexpected message" << x.content().stringify());
-      return sec::unexpected_message;
-    }
+    }, others >> wrong_msg
   );
   for_each(begin(expected), end(expected), [](int& val) { val *= 2; });
   self->send(worker, buf);
@@ -477,11 +455,7 @@ void test_phases(actor_system& sys) {
       auto res = ref.data();
       CAF_CHECK(res);
       check_vector_results("Testing phase one", expected, *res);
-    },
-    others >> [&](message_view& x) -> result<message> {
-      CAF_ERROR("unexpected message" << x.content().stringify());
-      return sec::unexpected_message;
-    }
+    }, others >> wrong_msg
   );
 }
 
@@ -492,6 +466,16 @@ CAF_TEST(opencl_basics) {
     .add_message_type<matrix_type>("square_matrix");
   actor_system system{cfg};
   test_opencl(system);
+  system.await_all_actors_done();
+}
+
+CAF_TEST(opencl_arguments) {
+  actor_system_config cfg;
+  cfg.load<opencl::manager>()
+    .add_message_type<ivec>("int_vector")
+    .add_message_type<matrix_type>("square_matrix");
+  actor_system system{cfg};
+  test_arguments(system);
   system.await_all_actors_done();
 }
 
@@ -510,7 +494,7 @@ CAF_TEST(opencl_mem_refs) {
   CAF_CHECK(res_1);
   CAF_CHECK_EQUAL(res_1->size(), input.size());
   check_vector_results("Testing mem_ref", input, *res_1);
-  auto res_2 = buf_1.data(2);
+  auto res_2 = buf_1.data(2ul);
   CAF_CHECK(res_2);
   CAF_CHECK_EQUAL(res_2->size(), 2ul);
   CAF_CHECK_EQUAL((*res_2)[0], input[0]);
@@ -524,7 +508,7 @@ CAF_TEST(opencl_mem_refs) {
   CAF_CHECK(!res_4);
 }
 
-CAF_TEST(opencl_phase_facade) {
+CAF_TEST(opencl_stages) {
   actor_system_config cfg;
   cfg.load<opencl::manager>()
     .add_message_type<ivec>("int_vector");
@@ -532,4 +516,3 @@ CAF_TEST(opencl_phase_facade) {
   test_phases(system);
   system.await_all_actors_done();
 }
-

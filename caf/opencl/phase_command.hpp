@@ -64,7 +64,7 @@ public:
     // Errors in this function can not be handled by opencl_err.hpp
     // because they require non-standard error handling
     CAF_LOG_TRACE("command::enqueue()");
-    this->ref(); // reference held by the OpenCL comand queue
+    this->ref(); // reference held by the OpenCL command queue
     auto data_or_nullptr = [](const dim_vec& vec) {
       return vec.empty() ? nullptr : vec.data();
     };

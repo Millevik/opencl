@@ -42,7 +42,9 @@ class manager;
 
 // convert to mem_ref
 template <class T>
-struct as_mem_ref { };
+struct as_mem_ref {
+  using type = mem_ref<T>;
+};
 
 template <class T>
 struct as_mem_ref<std::vector<T>> {
@@ -89,7 +91,7 @@ public:
   using command_type =
     typename phase_command_signature<actor_facade_phase, mem_ref_types>::type;
 
-  using tuple_type = 
+  using tuple_type =
     typename tuple_mem_ref_type<mem_ref_types>::type;
 
   const char* name() const override {
@@ -127,7 +129,7 @@ public:
                                                    prog, kernel, spawn_cfg);
     }
     return make_actor<actor_facade_phase, actor>(sys.next_actor_id(),
-                                                 sys.node(), &sys, 
+                                                 sys.node(), &sys,
                                                  std::move(actor_cfg),
                                                  prog, itr->second, spawn_cfg);
   }
@@ -183,17 +185,17 @@ public:
     if (event)
       events.push_back(event.get());
     get<I>(refs) = mem;
-    // TODO: check if device used for execution is the same as for the 
+    // TODO: check if device used for execution is the same as for the
     //       mem_ref, should we try to transfer memory in such cases?
     switch (mem.location()) {
-      case memory_location::local: {
+      case placement::local_mem: {
         v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(),
                          static_cast<unsigned>(I),
                          sizeof(typename mem_type::value_type) * mem.size(),
                          nullptr);
         break;
       }
-      case memory_location::priv: {
+      case placement::private_mem: {
         auto val = mem.value();
         CAF_ASSERT(val);
         v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(),
@@ -202,7 +204,7 @@ public:
                          static_cast<void*>(&val.value()));
         break;
       }
-      case memory_location::global: {
+      case placement::global_mem: {
         v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(),
                          static_cast<unsigned>(I),
                          sizeof(cl_mem), static_cast<void*>(&mem.get()));
