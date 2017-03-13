@@ -47,6 +47,8 @@ public:
       case placement::private_mem:
         return make_error(sec::runtime_error, "Cannot read private memory");
       case placement::global_mem: {
+        if (0 != (type_ & CL_MEM_HOST_NO_ACCESS))
+          return make_error(sec::runtime_error, "No memory access.");
         if (!memory_)
           return make_error(sec::runtime_error, "No memory assigned.");
         if (result_size && *result_size > num_elements_)
