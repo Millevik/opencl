@@ -20,6 +20,7 @@
 #ifndef CAF_OPENCL_MEM_REF_HPP
 #define CAF_OPENCL_MEM_REF_HPP
 
+#include <ios>
 #include <vector>
 
 #include "caf/sec.hpp"
@@ -47,8 +48,12 @@ public:
       case placement::private_mem:
         return make_error(sec::runtime_error, "Cannot read private memory");
       case placement::global_mem: {
-        if (0 != (type_ & CL_MEM_HOST_NO_ACCESS))
+        if (0 != (access_ & CL_MEM_HOST_NO_ACCESS)) {
+          std::cout << "Access is " << std::hex << access_
+                    << " and CL_MEM_HOST_NO_ACCESS is "
+                    << std::hex << CL_MEM_HOST_NO_ACCESS << std::endl;
           return make_error(sec::runtime_error, "No memory access.");
+        }
         if (!memory_)
           return make_error(sec::runtime_error, "No memory assigned.");
         if (result_size && *result_size > num_elements_)
@@ -78,6 +83,7 @@ public:
     event_.reset();
     memory_.reset();
     value_ = none;
+    access_ = 0;
   }
 
   /*
@@ -112,9 +118,11 @@ public:
     // nop
   }
   mem_ref(size_t num_elements, placement location, device* dev,
-          mem_ptr memory, event_ptr event, optional<T> value= none)
+          mem_ptr memory, cl_mem_flags access, event_ptr event,
+          optional<T> value = none)
     : num_elements_{num_elements},
       location_{location},
+      access_{access},
       device_{dev},
       event_{event},
       memory_{memory},
@@ -122,9 +130,11 @@ public:
     // nop
   }
   mem_ref(size_t num_elements, placement location, device* dev,
-          cl_mem memory, event_ptr event, optional<T> value = none)
+          cl_mem memory, cl_mem_flags access, event_ptr event,
+          optional<T> value = none)
     : num_elements_{num_elements},
       location_{location},
+      access_{access},
       device_{dev},
       event_{event},
       memory_{memory},
@@ -140,17 +150,11 @@ public:
   void swap(mem_ref<T>& other) {
     std::swap(num_elements_, other.num_elements_);
     std::swap(location_, other.location_);
-    std::swap(type_, other.type_);
+    std::swap(access_, other.access_);
     std::swap(device_, other.device_);
     event_.swap(other.event_);
     memory_.swap(other.memory_);
     std::swap(value_, other.value_);
-    // auto tmp1 = other.event_;
-    // other.event_ = event_;
-    // event_ = tmp1;
-    // auto tmp2 = other.memory_;
-    // other.memory_ = memory_;
-    // event_ = tmp2;
   }
 
 private:
@@ -160,7 +164,7 @@ private:
 
   size_t num_elements_;
   placement location_;
-  buffer_type type_;
+  cl_mem_flags access_;
   device* device_;
   event_ptr event_; // TODO: use vector, regular cleanup of CL_COMPLETE events
   mem_ptr memory_;

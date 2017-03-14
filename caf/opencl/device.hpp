@@ -67,7 +67,7 @@ public:
                                   cl_uint{0}, buffer_size, data.data()),
                   false);
     return mem_ref<T>{num_elements, placement::global_mem, this,
-                      std::move(buffer), std::move(event)};
+                      std::move(buffer), flags, std::move(event)};
     // TODO: save ref to mem_ref and clean up on destruction?
   }
 
@@ -78,7 +78,7 @@ public:
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(), flags,
                         sizeof(T) * size, nullptr);
     return mem_ref<T>{size, placement::global_mem, this, std::move(buffer),
-                      nullptr};
+                      flags, nullptr};
     // TODO: save ref to mem_ref and clean up on destruction?
   }
 
@@ -86,14 +86,15 @@ public:
   /// This argument cannot be accessed from the CPU context
   template <class T>
   mem_ref<T> local_argument(size_t size) {
-    return mem_ref<T>{size, placement::local_mem, this, nullptr, nullptr};
+    return mem_ref<T>{size, placement::local_mem, this, nullptr,
+                      CL_MEM_HOST_NO_ACCESS, nullptr};
   }
 
   /// Create a private argument, which is only a single value.
   template <class T>
   mem_ref<T> private_argument(T value) {
-    return mem_ref<T>(1, placement::private_mem, this, nullptr, nullptr,
-                      std::move(value));
+    return mem_ref<T>(1, placement::private_mem, this, nullptr,
+                      CL_MEM_HOST_NO_ACCESS, nullptr, std::move(value));
   }
 
   /// Intialize a new device in a context using a sepcific device_id
