@@ -116,8 +116,7 @@ program manager::create_program(const char* kernel_source, const char* options,
   return create_program(kernel_source, options, *dev);
 }
 
-program manager::create_program_from_file(const char* path,
-                                          const char* options,
+program manager::create_program_from_file(const char* path, const char* options,
                                           const device& dev) {
   std::ifstream read_source{std::string(path), std::ios::in};
   string kernel_source;
@@ -210,7 +209,7 @@ program manager::create_program(const char* kernel_source, const char* options,
   return {dev.context_, dev.queue_, pptr, move(available_kernels)};
 }
 
-manager::manager(actor_system& sys) : system_(sys){
+manager::manager(actor_system& sys) : system_(sys) {
   // nop
 }
 

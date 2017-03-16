@@ -73,4 +73,4 @@ inline const std::string& platform::get_version() const {
 } // namespace opencl
 } // namespace caf
 
-#endif // CAF_OPENCL_PLTFORM_HPP
+#endif // CAF_OPENCL_PLATFORM_HPP

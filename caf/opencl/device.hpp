@@ -37,7 +37,7 @@ enum buffer_type : cl_mem_flags {
 };
 
 enum placement {
-  global_mem, local_mem, private_mem
+  uninitialized, global_mem, local_mem, private_mem
 };
 
 class program;
@@ -60,14 +60,11 @@ public:
     size_t buffer_size = sizeof(T) * num_elements;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(), flags,
                         buffer_size, nullptr);
-    event_ptr event;
-    if (!data.empty())
-      event.reset(v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
-                                  queue_.get(), buffer, blocking,
-                                  cl_uint{0}, buffer_size, data.data()),
-                  false);
+    cl_event event = v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
+                                     queue_.get(), buffer, blocking,
+                                     cl_uint{0}, buffer_size, data.data());
     return mem_ref<T>{num_elements, placement::global_mem, this,
-                      std::move(buffer), flags, std::move(event)};
+                      std::move(buffer), flags, event, false};
     // TODO: save ref to mem_ref and clean up on destruction?
   }
 
@@ -94,7 +91,7 @@ public:
   template <class T>
   mem_ref<T> private_argument(T value) {
     return mem_ref<T>(1, placement::private_mem, this, nullptr,
-                      CL_MEM_HOST_NO_ACCESS, nullptr, std::move(value));
+                      CL_MEM_HOST_NO_ACCESS, nullptr, false, std::move(value));
   }
 
   /// Intialize a new device in a context using a sepcific device_id

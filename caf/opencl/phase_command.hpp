@@ -56,8 +56,10 @@ public:
   }
 
   ~phase_command() {
-    if (exec_)
-      clReleaseEvent(exec_);
+    if (execution_)
+      clReleaseEvent(execution_);
+    for (auto& e : events_)
+      clReleaseEvent(e);
   }
 
   void enqueue() {
@@ -77,51 +79,45 @@ public:
       data_or_nullptr(facade->spawn_cfg_.dimensions()),
       data_or_nullptr(facade->spawn_cfg_.local_dimensions()),
       static_cast<cl_uint>(events_.size()),
-      (events_.empty() ? nullptr : events_.data()), &exec_
+      (events_.empty() ? nullptr : events_.data()), &execution_
     );
     if (err != CL_SUCCESS) {
       CAF_LOG_ERROR("clEnqueueNDRangeKernel: "
                     << CAF_ARG(get_opencl_error(err)));
-      if (exec_)
-        clReleaseEvent(exec_);
+      if (execution_)
+        clReleaseEvent(execution_);
       this->deref();
       return;
     }
-    // TODO: don't wait for execution to finish:
+    // TODO: don't wait for execution_ to finish:
     // set the kernel event on all memory buffers and send them back
-    err = clSetEventCallback(exec_, CL_COMPLETE,
+    err = clSetEventCallback(execution_, CL_COMPLETE,
                              [](cl_event, cl_int, void* data) {
                                auto c = reinterpret_cast<phase_command*>(data);
-                               c->handle_results();
                                c->deref();
                              },
                              this);
     if (err != CL_SUCCESS) {
       CAF_LOG_ERROR("clSetEventCallback: " << CAF_ARG(get_opencl_error(err)));
-      if (exec_)
-        clReleaseEvent(exec_);
+      if (execution_)
+        clReleaseEvent(execution_);
       this->deref(); // callback is not set
       return;
     }
     err = clFlush(facade->queue_.get());
     if (err != CL_SUCCESS)
       CAF_LOG_ERROR("clFlush: " << CAF_ARG(get_opencl_error(err)));
-  }
-
-private:
-  void handle_results() {
-    // TODO: problem is here with message_from_results
-    // message type not announced?
-    auto msg = message_from_results{}(refs_);
+    auto msg = ref_msg_adding_event{execution_}(refs_);
     get<0>(handle_)->enqueue(actor_facade_, get<1>(handle_), std::move(msg),
                              nullptr);
   }
 
+private:
   std::tuple<strong_actor_ptr,message_id> handle_;
   strong_actor_ptr actor_facade_;
   std::vector<cl_event> events_;
   std::tuple<Ts...> refs_;
-  cl_event exec_;
+  cl_event execution_;
 };
 
 } // namespace opencl

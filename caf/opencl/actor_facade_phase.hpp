@@ -143,6 +143,14 @@ public:
     std::vector<cl_event> events;
     tuple_type refs;
     set_kernel_arguments(content, refs, events, indices);
+    /*
+    auto itr = std::unique(std::begin(events), std::end(events));
+    for (auto i = itr; itr != std::end(events); ++itr) {
+      if (*i != nullptr)
+        clReleaseEvent(*i);
+    }
+    events.erase(itr, std::end(events));
+    */
     auto hdl = std::make_tuple(sender, mid.response_id());
     auto cmd = make_counted<command_type>(std::move(hdl),
                                           actor_cast<strong_actor_ptr>(this),
@@ -181,9 +189,9 @@ public:
                             detail::int_list<I, Is...>) {
     using mem_type = typename detail::tl_at<mem_ref_types, I>::type;
     auto mem = msg.get_as<mem_type>(I);
-    auto event = mem.event();
-    if (event)
-      events.push_back(event.get());
+    auto event = mem.take_event();
+    if (event != nullptr)
+      events.push_back(event);
     get<I>(refs) = mem;
     // TODO: check if device used for execution is the same as for the
     //       mem_ref, should we try to transfer memory in such cases?
@@ -210,6 +218,9 @@ public:
                          sizeof(cl_mem), static_cast<void*>(&mem.get()));
         break;
       }
+      case placement::uninitialized:
+        CAF_LOG_ERROR("actor facade received uninitialized memory.");
+        break;
     }
     set_kernel_arguments(msg, refs, events, detail::int_list<Is...>{});
   }
