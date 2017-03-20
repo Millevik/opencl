@@ -315,7 +315,6 @@ public:
                      uint32_t&) {
     auto value_size = sizeof(T);
     auto value = wrapper(msg);
-    std::cout << "value = " << value << std::endl;
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              value_size, static_cast<void*>(&value));
   }
