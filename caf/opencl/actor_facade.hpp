@@ -34,12 +34,12 @@
 #include "caf/detail/limited_vector.hpp"
 
 #include "caf/opencl/global.hpp"
-#include "caf/opencl/command.hpp"
 #include "caf/opencl/program.hpp"
 #include "caf/opencl/arguments.hpp"
 #include "caf/opencl/smart_ptr.hpp"
 #include "caf/opencl/opencl_err.hpp"
 #include "caf/opencl/spawn_config.hpp"
+#include "caf/opencl/sync_command.hpp"
 
 namespace caf {
 namespace opencl {
@@ -55,11 +55,11 @@ struct function_sig_from_outputs<detail::type_list<Ts...>> {
 };
 
 template <class T, class List>
-struct command_sig_from_outputs;
+struct sync_command_sig_from_outputs;
 
 template <class T, class... Ts>
-struct command_sig_from_outputs<T, detail::type_list<Ts...>> {
-  using type = command<T, Ts...>;
+struct sync_command_sig_from_outputs<T, detail::type_list<Ts...>> {
+  using type = sync_command<T, Ts...>;
 };
 
 template <class... Ts>
@@ -86,8 +86,8 @@ public:
   using args_vec = std::vector<mem_ptr>;
   using size_vec = std::vector<size_t>;
 
-  using command_type =
-    typename command_sig_from_outputs<actor_facade, output_types>::type;
+  using sync_command_type =
+    typename sync_command_sig_from_outputs<actor_facade, output_types>::type;
 
   const char* name() const override {
     return "OpenCL actor";
@@ -155,14 +155,16 @@ public:
     size_vec result_sizes;
     add_kernel_arguments(events, input_buffers, output_buffers, scratch_buffers,
                          result_sizes, content, 0u, indices);
-    auto cmd = make_counted<command_type>(std::move(hdl),
-                                          actor_cast<strong_actor_ptr>(this),
-                                          std::move(events),
-                                          std::move(input_buffers),
-                                          std::move(output_buffers),
-                                          std::move(scratch_buffers),
-                                          std::move(result_sizes),
-                                          std::move(content));
+    auto cmd = make_counted<sync_command_type>(
+      std::move(hdl),
+      actor_cast<strong_actor_ptr>(this),
+      std::move(events),
+      std::move(input_buffers),
+      std::move(output_buffers),
+      std::move(scratch_buffers),
+      std::move(result_sizes),
+      std::move(content)
+    );
     cmd->enqueue();
   }
 
@@ -305,6 +307,17 @@ public:
     auto buffer_size = sizeof(value_type) * size;
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              buffer_size, nullptr);
+  }
+
+  template <long I, class T>
+  void create_buffer(const priv<T>& wrapper, evnt_vec&, size_vec&,
+                     args_vec&, args_vec&, args_vec&, message& msg,
+                     uint32_t&) {
+    auto value_size = sizeof(T);
+    auto value = wrapper(msg);
+    std::cout << "value = " << value << std::endl;
+    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
+             value_size, static_cast<void*>(&value));
   }
 
   template <class Fun>

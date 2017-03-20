@@ -33,18 +33,20 @@ constexpr size_t matrix_size = 4;
 constexpr size_t array_size = 32;
 constexpr size_t problem_size = 1024;
 
-constexpr const char* kernel_name = "matrix_square";
-constexpr const char* kernel_name_compiler_flag = "compiler_flag";
-constexpr const char* kernel_name_reduce = "reduce";
-constexpr const char* kernel_name_const = "const_mod";
-constexpr const char* kernel_name_inout = "times_two";
-constexpr const char* kernel_name_scratch = "use_scratch";
+constexpr const char* kn_matrix = "matrix_square";
+constexpr const char* kn_compiler_flag = "compiler_flag";
+constexpr const char* kn_reduce = "reduce";
+constexpr const char* kn_const = "const_mod";
+constexpr const char* kn_inout = "times_two";
+constexpr const char* kn_scratch = "use_scratch";
+constexpr const char* kn_local = "use_local";
+constexpr const char* kn_order = "test_order";
+constexpr const char* kn_private = "use_private";
 
 constexpr const char* compiler_flag = "-D CAF_OPENCL_TEST_FLAG";
 
 constexpr const char* kernel_source = R"__(
-  __kernel void matrix_square(__global int* matrix,
-                              __global int* output) {
+  kernel void matrix_square(global int* matrix, global int* output) {
     size_t size = get_global_size(0); // == get_global_size_(1);
     size_t x = get_global_id(0);
     size_t y = get_global_id(1);
@@ -57,9 +59,8 @@ constexpr const char* kernel_source = R"__(
 
 // http://developer.amd.com/resources/documentation-articles/
 // articles-whitepapers/opencl-optimization-case-study-simple-reductions
-  __kernel void reduce(__global int* buffer,
-                       __global int* result) {
-    __local int scratch[512];
+  kernel void reduce(global int* buffer, global int* result) {
+    local int scratch[512];
     int local_index = get_local_id(0);
     scratch[local_index] = buffer[get_global_id(0)];
     barrier(CLK_LOCAL_MEM_FENCE);
@@ -76,35 +77,85 @@ constexpr const char* kernel_source = R"__(
     }
   }
 
-  __kernel void const_mod(__constant int* input,
-                          __global int* output) {
+  kernel void const_mod(constant int* input, global int* output) {
     size_t idx = get_global_id(0);
     output[idx] = input[0];
   }
 
-  __kernel void times_two(__global int* values) {
+  kernel void times_two(global int* values) {
     size_t idx = get_global_id(0);
     values[idx] = values[idx] * 2;
   }
 
-  __kernel void use_scratch(__global int* values,
-                            __global int* buf) {
+  kernel void use_scratch(global int* values, global int* buf) {
     size_t idx = get_global_id(0);
     buf[idx] = values[idx];
     buf[idx] += values[idx];
     values[idx] = buf[idx];
   }
+
+  inline void prefix_sum(local int* data, size_t len, size_t lids) {
+    size_t lid = get_local_id(0);
+    size_t inc = 2;
+    // reduce
+    while (inc <= len) {
+      int j = inc >> 1;
+      for (int i = (j - 1) + (lid * inc); (i + inc) < len; i += (lids * inc))
+        data[i + j] = data[i] + data[i + j];
+      inc = inc << 1;
+      barrier(CLK_LOCAL_MEM_FENCE);
+    }
+    // downsweep
+    data[len - 1] = 0;
+    barrier(CLK_LOCAL_MEM_FENCE);
+    while (inc >= 2) {
+      int j = inc >> 1;
+      for (int i = (j - 1) + (lid * inc); (i + j) <= len; i += (lids * inc)) {
+        uint tmp = data[i + j];
+        data[i + j] = data[i] + data[i + j];
+        data[i] = tmp;
+      }
+      inc = inc >> 1;
+      barrier(CLK_LOCAL_MEM_FENCE);
+    }
+  }
+
+  kernel void use_local(global int* values, local int* buf) {
+    size_t lid = get_local_id(0);
+    size_t gid = get_group_id(0);
+    size_t gs = get_local_size(0);
+    buf[lid] = values[gid * gs + lid];
+    barrier(CLK_LOCAL_MEM_FENCE);
+    prefix_sum(buf, gs, gs);
+    barrier(CLK_LOCAL_MEM_FENCE);
+    values[gid * gs + lid] = buf[lid];
+  }
+
+  kernel void test_order(local int* buf, global int* values) {
+    size_t lid = get_local_id(0);
+    size_t gid = get_group_id(0);
+    size_t gs = get_local_size(0);
+    buf[lid] = values[gid * gs + lid];
+    barrier(CLK_LOCAL_MEM_FENCE);
+    prefix_sum(buf, gs, gs);
+    barrier(CLK_LOCAL_MEM_FENCE);
+    values[gid * gs + lid] = buf[lid];
+  }
+
+  kernel void use_private(global int* buf, private int val) {
+    buf[get_global_id(0)] += val;
+  }
 )__";
 
 constexpr const char* kernel_source_error = R"__(
-  __kernel void missing(__global int*) {
+  kernel void missing(global int*) {
     size_t semicolon_missing
   }
 )__";
 
 constexpr const char* kernel_source_compiler_flag = R"__(
-  __kernel void compiler_flag(__global int* input,
-                              __global int* output) {
+  kernel void compiler_flag(global int* input,
+                              global int* output) {
     size_t x = get_global_id(0);
 #   ifdef CAF_OPENCL_TEST_FLAG
     output[x] = input[x];
@@ -240,7 +291,7 @@ void test_opencl(actor_system& sys) {
                        152, 174, 196, 218,
                        248, 286, 324, 362,
                        344, 398, 452, 506};
-  auto w1 = mngr.spawn(prog, kernel_name,
+  auto w1 = mngr.spawn(prog, kn_matrix,
                        opencl::spawn_config{dims{matrix_size, matrix_size}},
                        opencl::in<int*>{}, opencl::out<int*>{});
   self->send(w1, make_iota_vector<int>(matrix_size * matrix_size));
@@ -253,7 +304,7 @@ void test_opencl(actor_system& sys) {
   );
   opencl::spawn_config cfg2{dims{matrix_size, matrix_size}};
   // Pass kernel directly to the actor
-  auto w2 = mngr.spawn(kernel_source, kernel_name, cfg2,
+  auto w2 = mngr.spawn(kernel_source, kn_matrix, cfg2,
                        opencl::in<int*>{}, opencl::out<int*>{});
   self->send(w2, make_iota_vector<int>(matrix_size * matrix_size));
   self->receive (
@@ -271,12 +322,12 @@ void test_opencl(actor_system& sys) {
       }
     );
   };
-  auto map_res = [=](ivec result) -> message {
+  auto map_res = [](ivec result) -> message {
     return make_message(matrix_type{move(result)});
   };
   opencl::spawn_config cfg3{dims{matrix_size, matrix_size}};
   // let the runtime choose the device
-  auto w3 = mngr.spawn(mngr.create_program(kernel_source), kernel_name, cfg3,
+  auto w3 = mngr.spawn(mngr.create_program(kernel_source), kn_matrix, cfg3,
                        map_arg, map_res,
                        opencl::in<int*>{}, opencl::out<int*>{});
   self->send(w3, make_iota_matrix<matrix_size>());
@@ -288,7 +339,7 @@ void test_opencl(actor_system& sys) {
     }, others >> wrong_msg
   );
   opencl::spawn_config cfg4{dims{matrix_size, matrix_size}};
-  auto w4 = mngr.spawn(prog, kernel_name, cfg4,
+  auto w4 = mngr.spawn(prog, kn_matrix, cfg4,
                        map_arg, map_res,
                        opencl::in<int*>{}, opencl::out<int*>{});
   self->send(w4, make_iota_matrix<matrix_size>());
@@ -312,7 +363,7 @@ void test_opencl(actor_system& sys) {
   // create program with opencl compiler flags
   auto prog5 = mngr.create_program(kernel_source_compiler_flag, compiler_flag);
   opencl::spawn_config cfg5{dims{array_size}};
-  auto w5 = mngr.spawn(prog5, kernel_name_compiler_flag, cfg5,
+  auto w5 = mngr.spawn(prog5, kn_compiler_flag, cfg5,
                        opencl::in<int*>{}, opencl::out<int*>{});
   self->send(w5, make_iota_vector<int>(array_size));
   auto expected3 = make_iota_vector<int>(array_size);
@@ -338,7 +389,7 @@ void test_opencl(actor_system& sys) {
   auto result_size_6 = [reduce_result_size](const ivec&) {
     return reduce_result_size;
   };
-  auto w6 = mngr.spawn(prog, kernel_name_reduce, cfg6,
+  auto w6 = mngr.spawn(prog, kn_reduce, cfg6,
                        opencl::in<ivec>{}, opencl::out<ivec>{result_size_6});
   self->send(w6, move(arr6));
   auto wg_size_as_int = static_cast<int>(max_wg_size);
@@ -351,12 +402,12 @@ void test_opencl(actor_system& sys) {
     }, others >> wrong_msg
   );
   // calculator function for getting the size of the output
-  auto result_size_7 = [=](const ivec&) {
+  auto result_size_7 = [](const ivec&) {
     return problem_size;
   };
   // constant memory arguments
   const ivec arr7{problem_size};
-  auto w7 = mngr.spawn(kernel_source, kernel_name_const,
+  auto w7 = mngr.spawn(kernel_source, kn_const,
                        opencl::spawn_config{dims{problem_size}},
                        opencl::in<ivec>{},
                        opencl::out<ivec>{result_size_7});
@@ -382,7 +433,7 @@ void test_arguments(actor_system& sys) {
   };
   const ivec expected1{ 56,  62,  68,  74,   152, 174, 196, 218,
                        248, 286, 324, 362,   344, 398, 452, 506};
-  auto w1 = mngr.spawn(mngr.create_program(kernel_source, "", dev), kernel_name,
+  auto w1 = mngr.spawn(mngr.create_program(kernel_source, "", dev), kn_matrix,
                        opencl::spawn_config{dims{matrix_size, matrix_size}},
                        opencl::in<int*>{}, opencl::out<int*>{});
   self->send(w1, make_iota_vector<int>(matrix_size * matrix_size));
@@ -394,7 +445,7 @@ void test_arguments(actor_system& sys) {
   ivec input9 = make_iota_vector<int>(problem_size);
   ivec expected9{input9};
   for_each(begin(expected9), end(expected9), [](int& val){ val *= 2; });
-  auto w9 = mngr.spawn(kernel_source, kernel_name_inout,
+  auto w9 = mngr.spawn(kernel_source, kn_inout,
                        spawn_config{dims{problem_size}},
                        opencl::in_out<ivec>{});
   self->send(w9, move(input9));
@@ -407,7 +458,7 @@ void test_arguments(actor_system& sys) {
   ivec expected10{input10};
   for_each(begin(expected10), end(expected10), [](int& val){ val *= 2; });
   auto result_size_10 = [=](const ivec& input) { return input.size(); };
-  auto w10 = mngr.spawn(kernel_source, kernel_name_scratch,
+  auto w10 = mngr.spawn(kernel_source, kn_scratch,
                         spawn_config{dims{problem_size}},
                         opencl::in_out<ivec>{},
                         opencl::scratch<ivec>{result_size_10});
@@ -417,9 +468,60 @@ void test_arguments(actor_system& sys) {
       check_vector_results("Testing buffer arugment", expected10, result);
     }, others >> wrong_msg
   );
-  // TODO: test local
-  // TODO: test different argument order, i.e., output before input
-  // TODO: implement and test private argument
+  // test local
+  size_t la_global = 256;
+  size_t la_local = la_global / 2;
+  ivec input_local = make_iota_vector<int>(la_global);
+  ivec expected_local{input_local};
+  auto last = 0;
+  for (size_t i = 0; i < la_global; ++i) {
+    if (i == la_local) last = 0;
+    auto tmp = expected_local[i];
+    expected_local[i] = last;
+    last += tmp;
+  }
+  auto local_buffer_size = [=](const ivec&) {
+    return la_local;
+  };
+  auto work_local = mngr.spawn(kernel_source, kn_local,
+                               spawn_config{dims{la_global}, {}, dims{la_local}},
+                               opencl::in_out<ivec>{},
+                               opencl::local<ivec>{local_buffer_size});
+  self->send(work_local, std::move(input_local));
+  self->receive(
+    [&](const ivec& result) {
+      check_vector_results("Testing local arugment", expected_local, result);
+    }
+  );
+  // Same test, different argument order
+  input_local = make_iota_vector<int>(la_global);
+  work_local = mngr.spawn(kernel_source, kn_order,
+                          spawn_config{dims{la_global}, {}, dims{la_local}},
+                          opencl::local<ivec>{local_buffer_size},
+                          opencl::in_out<ivec>{});
+  self->send(work_local, std::move(input_local));
+  self->receive(
+    [&](const ivec& result) {
+      check_vector_results("Testing local arugment", expected_local, result);
+    }
+  );
+  // Test private argument
+  ivec input_private = make_iota_vector<int>(problem_size);
+  int val_private = 42;
+  ivec expected_private{input_private};
+  for_each(begin(expected_private), end(expected_private),
+           [val_private](int& val){ val += val_private; });
+  auto worker_private = mngr.spawn(kernel_source, kn_private,
+                                   spawn_config{dims{problem_size}},
+                                   opencl::in_out<ivec>{},
+                                   opencl::priv<int>{val_private});
+  self->send(worker_private, std::move(input_private));
+  self->receive(
+    [&](const ivec& result) {
+      check_vector_results("Testing private arugment", expected_private,
+                           result);
+    }
+  );
 }
 
 void test_phases(actor_system& sys) {
@@ -437,8 +539,8 @@ void test_phases(actor_system& sys) {
   for_each(begin(expected), end(expected), [](int& val) { val *= 2; });
   auto prog   = mngr.create_program(kernel_source, "", dev);
   auto conf   = spawn_config{dims{input.size()}};
-  auto worker = mngr.spawn_phase<int*>(prog, kernel_name_inout, conf);
-  auto buf    = dev.global_argument(input, buffer_type::input_output);
+  auto worker = mngr.spawn_phase<int*>(prog, kn_inout, conf);
+  auto buf    = dev.global_argument(input);
   CAF_CHECK(buf.size(), input.size());
   self->send(worker, buf);
   self->receive(
@@ -487,6 +589,7 @@ CAF_TEST(opencl_mem_refs) {
   auto opt = mngr.get_device(0);
   CAF_REQUIRE(opt);
   auto dev = *opt;
+  // global arguments
   vector<uint32_t> input{1, 2, 3, 4};
   auto buf_1 = dev.global_argument(input, buffer_type::input_output);
   CAF_CHECK_EQUAL(buf_1.size(), input.size());
@@ -511,6 +614,17 @@ CAF_TEST(opencl_mem_refs) {
   buf_2.reset();
   auto res_5 = buf_2.data();
   CAF_CHECK(!res_5);
+  // TODO: test copy is really a copy, not the same onbject
+  // local args
+  auto buf_local_1 = dev.local_argument<uint32_t>(128);
+  CAF_CHECK_EQUAL(buf_local_1.size(), 128u);
+  // private args
+  auto private_value = 42;
+  auto buf_private_1 = dev.private_argument(private_value);
+  CAF_CHECK_EQUAL(buf_private_1.size(), 1u);
+  auto private_value_expected = buf_private_1.value();
+  CAF_REQUIRE(private_value_expected);
+  CAF_CHECK_EQUAL(private_value, *private_value_expected);
 }
 
 CAF_TEST(opencl_stages) {

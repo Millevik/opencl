@@ -33,15 +33,36 @@
 namespace caf {
 namespace opencl {
 
+struct msg_adding_event {
+  msg_adding_event(cl_event event) : event_(event) {
+    // nop
+  }
+  template <class T, class... Ts>
+  message operator()(T& x, Ts&... xs) {
+    return make_message(add_event(std::move(x)), add_event(std::move(xs))...);
+  }
+  template <class... Ts>
+  message operator()(std::tuple<Ts...>& values) {
+    return apply_args(*this, detail::get_indices(values), values);
+  }
+  template <class T>
+  mem_ref<T> add_event(mem_ref<T> ref) {
+    ref.set_event(event_);
+    return std::move(ref);
+  }
+  cl_event event_;
+};
+
+
 /// A reference type for buffers on a OpenCL devive. Access is not thread safe.
 /// Hence, a mem_ref should only be passed to actors sequentially.
 template <class T>
-class mem_ref : public ref_counted {
+class mem_ref {
 public:
   using value_type = T;
 
   friend class device;
-  friend struct ref_msg_adding_event;
+  friend struct msg_adding_event;
   template <class... Ts>
   friend class actor_facade_phase;
 
@@ -83,6 +104,13 @@ public:
     return make_error(sec::runtime_error, "Unknown memory location.");
   }
 
+  /*
+  void insert(const vector<T>& data, optional<size_t> from = none,
+              optional<size_t> to = none) {
+    
+  }
+  */
+
   void reset() {
     num_elements_ = 0;
     location_ = placement::uninitialized;
@@ -102,12 +130,41 @@ public:
 
   void move_to(device* dev) {
     // move buffer to different device
-  }
-
-  expected<mem_ref<T>> copy(mem_ref<T>) {
-    // OpenCL function call
+    // Introduced in OpenCL 1.2: clEnqueueMigrateMemObjects
   }
   */
+
+  expected<mem_ref<T>> copy() {
+    switch (location_) {
+      case placement::uninitialized:
+      case placement::local_mem:
+      case placement::private_mem: {
+        mem_ref<T> new_ref = *this;
+        return new_ref;
+      }
+      case placement::global_mem: {
+        if (!memory_)
+          return make_error(sec::runtime_error, "No memory assigned.");
+        command_queue_ptr queue = device_->queue_;
+        auto buffer_size = sizeof(T) * num_elements_;
+        cl_event event;
+        cl_mem buffer;
+        std::vector<cl_event> prev_events;
+        if (event_ != nullptr)
+          prev_events.push_back(event_);
+        auto err = clEnqueueCopyBuffer(queue.get(), memory_.get(), buffer,
+                                       0, 0, // no offset for now
+                                       buffer_size, prev_events.size(),
+                                       prev_events.data(), &event);
+        if (err != CL_SUCCESS)
+          return make_error(sec::runtime_error, get_opencl_error(err));
+        // decrements the previous event we used for waiting above
+        set_event(event, false);
+        return mem_ref<T>(num_elements_, location_, device_, std::move(buffer),
+                          access_, event, true);
+      }
+    }
+  }
 
   inline const mem_ptr& get() const {
     return memory_;
@@ -125,6 +182,7 @@ public:
     return location_;
   }
 
+  /// Only available for private arguments, return none otherwise
   inline optional<T> value() const {
     return value_;
   }

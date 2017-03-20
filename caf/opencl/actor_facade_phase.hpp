@@ -33,7 +33,7 @@
 #include "caf/opencl/smart_ptr.hpp"
 #include "caf/opencl/opencl_err.hpp"
 #include "caf/opencl/spawn_config.hpp"
-#include "caf/opencl/phase_command.hpp"
+#include "caf/opencl/async_command.hpp"
 
 namespace caf {
 namespace opencl {
@@ -56,13 +56,13 @@ struct as_mem_ref<T*> {
   using type = mem_ref<T>;
 };
 
-// derive signature of suitable phase_command
+// derive signature of suitable async_command
 template <class T, class List>
-struct phase_command_signature;
+struct async_command_signature;
 
 template <class T, class... Ts>
-struct phase_command_signature<T, detail::type_list<Ts...>> {
-  using type = phase_command<T, Ts...>;
+struct async_command_signature<T, detail::type_list<Ts...>> {
+  using type = async_command<T, Ts...>;
 };
 
 // derive type for a tuple matching the arguments as mem_refs
@@ -88,8 +88,8 @@ public:
   using args_vec = std::vector<mem_ptr>;
   using size_vec = std::vector<size_t>;
 
-  using command_type =
-    typename phase_command_signature<actor_facade_phase, mem_ref_types>::type;
+  using async_command_type =
+    typename async_command_signature<actor_facade_phase, mem_ref_types>::type;
 
   using tuple_type =
     typename tuple_mem_ref_type<mem_ref_types>::type;
@@ -152,7 +152,7 @@ public:
     events.erase(itr, std::end(events));
     */
     auto hdl = std::make_tuple(sender, mid.response_id());
-    auto cmd = make_counted<command_type>(std::move(hdl),
+    auto cmd = make_counted<async_command_type>(std::move(hdl),
                                           actor_cast<strong_actor_ptr>(this),
                                           std::move(events),
                                           std::move(refs));

@@ -17,8 +17,8 @@
  * http://www.boost.org/LICENSE_1_0.txt.                                      *
  ******************************************************************************/
 
-#ifndef CAF_OPENCL_PHASE_COMMAND_HPP
-#define CAF_OPENCL_PHASE_COMMAND_HPP
+#ifndef CAF_OPENCL_async_command_HPP
+#define CAF_OPENCL_async_command_HPP
 
 #include <tuple>
 #include <vector>
@@ -42,9 +42,9 @@ namespace caf {
 namespace opencl {
 
 template <class FacadeType, class... Ts>
-class phase_command : public ref_counted {
+class async_command : public ref_counted {
 public:
-  phase_command(std::tuple<strong_actor_ptr,message_id> handle,
+  async_command(std::tuple<strong_actor_ptr,message_id> handle,
                 strong_actor_ptr facade,
                 std::vector<cl_event> events,
                 std::tuple<Ts...> refs)
@@ -55,7 +55,7 @@ public:
     // nop
   }
 
-  ~phase_command() {
+  ~async_command() {
     if (execution_)
       clReleaseEvent(execution_);
     for (auto& e : events_)
@@ -89,11 +89,9 @@ public:
       this->deref();
       return;
     }
-    // TODO: don't wait for execution_ to finish:
-    // set the kernel event on all memory buffers and send them back
     err = clSetEventCallback(execution_, CL_COMPLETE,
                              [](cl_event, cl_int, void* data) {
-                               auto c = reinterpret_cast<phase_command*>(data);
+                               auto c = reinterpret_cast<async_command*>(data);
                                c->deref();
                              },
                              this);
@@ -107,7 +105,7 @@ public:
     err = clFlush(facade->queue_.get());
     if (err != CL_SUCCESS)
       CAF_LOG_ERROR("clFlush: " << CAF_ARG(get_opencl_error(err)));
-    auto msg = ref_msg_adding_event{execution_}(refs_);
+    auto msg = msg_adding_event{execution_}(refs_);
     get<0>(handle_)->enqueue(actor_facade_, get<1>(handle_), std::move(msg),
                              nullptr);
   }
@@ -123,4 +121,4 @@ private:
 } // namespace opencl
 } // namespace caf
 
-#endif // CAF_OPENCL_PHASE_COMMAND_HPP
+#endif // CAF_OPENCL_async_command_HPP

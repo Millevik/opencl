@@ -50,6 +50,19 @@ enum device_type {
   all         = CL_DEVICE_TYPE_ALL
 };
 
+/// Default values to create OpenCL buffers
+enum buffer_type : cl_mem_flags {
+  input         = CL_MEM_READ_WRITE | CL_MEM_HOST_WRITE_ONLY,
+  input_output  = CL_MEM_READ_WRITE,
+  output        = CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY,
+  scratch_space = CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS
+};
+
+/// Memory placement for OpenCL memory buffers
+enum placement {
+  uninitialized, global_mem, local_mem, private_mem
+};
+
 std::ostream& operator<<(std::ostream& os, device_type dev);
 device_type device_type_from_ulong(cl_ulong dev);
 

@@ -17,8 +17,8 @@
  * http://www.boost.org/LICENSE_1_0.txt.                                      *
  ******************************************************************************/
 
-#ifndef CAF_OPENCL_COMMAND_HPP
-#define CAF_OPENCL_COMMAND_HPP
+#ifndef CAF_OPENCL_sync_command_HPP
+#define CAF_OPENCL_sync_command_HPP
 
 #include <tuple>
 #include <vector>
@@ -42,9 +42,9 @@ namespace caf {
 namespace opencl {
 
 template <class FacadeType, class... Ts>
-class command : public ref_counted {
+class sync_command : public ref_counted {
 public:
-  command(std::tuple<strong_actor_ptr,message_id> handle,
+  sync_command(std::tuple<strong_actor_ptr,message_id> handle,
           strong_actor_ptr actor_facade,
           std::vector<cl_event> events, std::vector<mem_ptr> input_bufs,
           std::vector<mem_ptr> output_bufs, std::vector<mem_ptr> scratch_bufs,
@@ -61,7 +61,7 @@ public:
     // nop
   }
 
-  ~command() override {
+  ~sync_command() override {
     for (auto& e : mem_in_events_) {
       v1callcl(CAF_CLF(clReleaseEvent),e);
     }
@@ -73,7 +73,7 @@ public:
   void enqueue() {
     // Errors in this function can not be handled by opencl_err.hpp
     // because they require non-standard error handling
-    CAF_LOG_TRACE("command::enqueue()");
+    CAF_LOG_TRACE("sync_command::enqueue()");
     this->ref(); // reference held by the OpenCL comand queue
     cl_event event_k;
     auto data_or_nullptr = [](const dim_vec& vec) {
@@ -118,7 +118,7 @@ public:
     }
     err = clSetEventCallback(marker, CL_COMPLETE,
                              [](cl_event, cl_int, void* data) {
-                               auto cmd = reinterpret_cast<command*>(data);
+                               auto cmd = reinterpret_cast<sync_command*>(data);
                                cmd->handle_results();
                                cmd->deref();
                              },
@@ -171,7 +171,7 @@ private:
                                    std::get<I>(result_buffers_).data(),
                                    1, &kernel_done, &event);
     if (err != CL_SUCCESS) {
-      this->deref(); // failed to enqueue command
+      this->deref(); // failed to enqueue sync_command
       throw std::runtime_error("clEnqueueReadBuffer: " +
                                get_opencl_error(err));
     }
@@ -195,4 +195,4 @@ private:
 } // namespace opencl
 } // namespace caf
 
-#endif // CAF_OPENCL_COMMAND_HPP
+#endif // CAF_OPENCL_sync_command_HPP

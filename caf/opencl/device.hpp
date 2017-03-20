@@ -29,17 +29,6 @@
 namespace caf {
 namespace opencl {
 
-enum buffer_type : cl_mem_flags {
-  input         = CL_MEM_READ_WRITE | CL_MEM_HOST_WRITE_ONLY,
-  input_output  = CL_MEM_READ_WRITE,
-  output        = CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY,
-  scratch_space = CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS
-};
-
-enum placement {
-  uninitialized, global_mem, local_mem, private_mem
-};
-
 class program;
 class manager;
 template <class T> class mem_ref;

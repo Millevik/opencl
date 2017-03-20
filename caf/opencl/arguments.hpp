@@ -138,8 +138,13 @@ struct priv {
   priv(Arg val) {
     value_ = val;
   }
-  optional<Arg> operator()(message& msg) const {
-    return fun_ ? fun_(msg) : value_;
+  Arg operator()(message& msg) const {
+    if (fun_) {
+      auto res = fun_(msg);
+      if (res)
+        return *res;
+    }
+    return value_;
   }
   Arg value_;
   std::function<optional<Arg> (message&)> fun_;
@@ -258,26 +263,6 @@ struct message_from_results {
   message operator()(std::tuple<Ts...>& values) {
     return apply_args(*this, detail::get_indices(values), values);
   }
-};
-
-struct ref_msg_adding_event {
-  ref_msg_adding_event(cl_event event) : event_(event) {
-    // nop
-  }
-  template <class T, class... Ts>
-  message operator()(T& x, Ts&... xs) {
-    return make_message(add_event(std::move(x)), add_event(std::move(xs))...);
-  }
-  template <class... Ts>
-  message operator()(std::tuple<Ts...>& values) {
-    return apply_args(*this, detail::get_indices(values), values);
-  }
-  template <class T>
-  mem_ref<T> add_event(mem_ref<T> ref) {
-    ref.set_event(event_);
-    return std::move(ref);
-  }
-  cl_event event_;
 };
 
 /// Helpers for conversion in deprecated spawn functions
