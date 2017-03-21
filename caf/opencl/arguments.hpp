@@ -117,7 +117,7 @@ struct local {
 };
 
 /// Argument placed in private memory. Requires a default value but can
-/// alternatively be calculated depending on the input, through a function
+/// alternatively be calculated depending on the input through a function
 /// passed to the constructor.
 template <class Arg>
 struct priv {

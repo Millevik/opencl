@@ -17,8 +17,8 @@
  * http://www.boost.org/LICENSE_1_0.txt.                                      *
  ******************************************************************************/
 
-#ifndef CAF_OPENCL_ACTOR_FACADE_HPP
-#define CAF_OPENCL_ACTOR_FACADE_HPP
+#ifndef CAF_OPENCL_OPENCL_ACTOR_HPP
+#define CAF_OPENCL_OPENCL_ACTOR_HPP
 
 #include <ostream>
 #include <iostream>
@@ -34,39 +34,79 @@
 #include "caf/detail/limited_vector.hpp"
 
 #include "caf/opencl/global.hpp"
+#include "caf/opencl/mem_ref.hpp"
 #include "caf/opencl/program.hpp"
 #include "caf/opencl/arguments.hpp"
 #include "caf/opencl/smart_ptr.hpp"
 #include "caf/opencl/opencl_err.hpp"
 #include "caf/opencl/spawn_config.hpp"
 #include "caf/opencl/sync_command.hpp"
+#include "caf/opencl/async_command.hpp"
 
 namespace caf {
 namespace opencl {
 
 class manager;
 
+// signature for the function that is applied to output arguments
 template <class List>
-struct function_sig_from_outputs;
+struct output_function_sig;
 
 template <class... Ts>
-struct function_sig_from_outputs<detail::type_list<Ts...>> {
+struct output_function_sig<detail::type_list<Ts...>> {
   using type = std::function<message (Ts&...)>;
 };
 
+// convert to mem_ref
+template <class T>
+struct to_mem_ref {
+  using type = mem_ref<T>;
+};
+
+template <class T>
+struct to_mem_ref<std::vector<T>> {
+  using type = mem_ref<T>;
+};
+
+template <class T>
+struct to_mem_ref<T*> {
+  using type = mem_ref<T>;
+};
+
+// derive signature of a synchronous command
 template <class T, class List>
-struct sync_command_sig_from_outputs;
+struct sync_command_sig;
 
 template <class T, class... Ts>
-struct sync_command_sig_from_outputs<T, detail::type_list<Ts...>> {
+struct sync_command_sig<T, detail::type_list<Ts...>> {
   using type = sync_command<T, Ts...>;
 };
 
+// derive signature of a asynchronous command
+template <class T, class List>
+struct async_command_sig;
+
+template <class T, class... Ts>
+struct async_command_sig<T, detail::type_list<Ts...>> {
+  using type = async_command<T, Ts...>;
+};
+
+// derive type for a tuple matching the arguments as mem_refs
+template <class List>
+struct tuple_type_of;
+
 template <class... Ts>
-class actor_facade : public monitorable_actor {
+struct tuple_type_of<detail::type_list<Ts...>> {
+  using type = std::tuple<Ts...>;
+};
+
+template <class... Ts>
+class opencl_actor : public monitorable_actor {
 public:
   using arg_types = detail::type_list<Ts...>;
   using unpacked_types = typename detail::tl_map<arg_types, extract_type>::type;
+
+  using mem_ref_types = typename detail::tl_map<unpacked_types, to_mem_ref>::type;
 
   using input_wrapped_types =
     typename detail::tl_filter<arg_types, is_input_arg>::type;
@@ -78,7 +118,7 @@ public:
     typename detail::tl_filter<arg_types, is_output_arg>::type;
   using output_types =
     typename detail::tl_map<output_wrapped_types, extract_type>::type;
-  using output_mapping = typename function_sig_from_outputs<output_types>::type;
+  using output_mapping = typename output_function_sig<output_types>::type;
 
   typename detail::il_indices<arg_types>::type indices;
 
@@ -87,7 +127,12 @@ public:
   using size_vec = std::vector<size_t>;
 
   using sync_command_type =
-    typename sync_command_sig_from_outputs<actor_facade, output_types>::type;
+    typename sync_command_sig<opencl_actor, output_types>::type;
+  using async_command_type =
+    typename async_command_sig<opencl_actor, mem_ref_types>::type;
+
+  using mem_ref_tuple =
+    typename tuple_type_of<mem_ref_types>::type;
 
   const char* name() const override {
     return "OpenCL actor";
@@ -120,14 +165,14 @@ public:
       kernel.reset(v2get(CAF_CLF(clCreateKernel), prog.program_.get(),
                                  kernel_name),
                    false);
-      return make_actor<actor_facade, actor>(sys.next_actor_id(), sys.node(),
+      return make_actor<opencl_actor, actor>(sys.next_actor_id(), sys.node(),
                                              &sys, std::move(actor_cfg),
                                              prog, kernel, spawn_cfg,
                                              std::move(map_args),
                                              std::move(map_result),
                                              std::forward_as_tuple(xs...));
     }
-    return make_actor<actor_facade, actor>(sys.next_actor_id(), sys.node(),
+    return make_actor<opencl_actor, actor>(sys.next_actor_id(), sys.node(),
                                            &sys, std::move(actor_cfg),
                                            prog, itr->second, spawn_cfg,
                                            std::move(map_args),
@@ -145,27 +190,44 @@ public:
         return;
       content = std::move(*mapped);
     }
-    if (!content.match_elements(input_types{}))
-      return;
     auto hdl = std::make_tuple(sender, mid.response_id());
-    evnt_vec events;
-    args_vec input_buffers;
-    args_vec output_buffers;
-    args_vec scratch_buffers;
-    size_vec result_sizes;
-    add_kernel_arguments(events, input_buffers, output_buffers, scratch_buffers,
-                         result_sizes, content, 0u, indices);
-    auto cmd = make_counted<sync_command_type>(
-      std::move(hdl),
-      actor_cast<strong_actor_ptr>(this),
-      std::move(events),
-      std::move(input_buffers),
-      std::move(output_buffers),
-      std::move(scratch_buffers),
-      std::move(result_sizes),
-      std::move(content)
-    );
-    cmd->enqueue();
+    if (config_.is_stage()) {
+      if (!content.match_elements(mem_ref_types{}))
+        return;
+      std::vector<cl_event> events;
+      mem_ref_tuple refs;
+      set_kernel_arguments(content, refs, events, indices);
+      auto cmd = make_counted<async_command_type>(
+        std::move(hdl),
+        actor_cast<strong_actor_ptr>(this),
+        std::move(events),
+        std::move(refs),
+        config_
+      );
+      cmd->enqueue();
+    } else {
+      if (!content.match_elements(input_types{}))
+        return;
+      evnt_vec events;
+      args_vec input_buffers;
+      args_vec output_buffers;
+      args_vec scratch_buffers;
+      size_vec result_sizes;
+      add_kernel_arguments(events, input_buffers, output_buffers,
+                           scratch_buffers, result_sizes, content,
+                           0u, indices);
+      auto cmd = make_counted<sync_command_type>(
+        std::move(hdl),
+        actor_cast<strong_actor_ptr>(this),
+        std::move(events),
+        std::move(input_buffers),
+        std::move(output_buffers),
+        std::move(scratch_buffers),
+        std::move(result_sizes),
+        std::move(content)
+      );
+      cmd->enqueue();
+    }
   }
 
   void enqueue(mailbox_element_ptr ptr, execution_unit* eu) override {
@@ -174,7 +236,7 @@ public:
     enqueue(ptr->sender, ptr->mid, ptr->move_content_to_message(), eu);
   }
 
-  actor_facade(actor_config actor_cfg,
+  opencl_actor(actor_config actor_cfg,
                const program& prog, kernel_ptr kernel,
                spawn_config  spawn_cfg,
                input_mapping map_args, output_mapping map_result,
@@ -194,6 +256,8 @@ public:
                                            size_t{1},
                                            std::multiplies<size_t>{});
   }
+
+  /*** handle arguments for synchronous command ***/
 
   void add_kernel_arguments(evnt_vec&, args_vec&, args_vec&, args_vec&,
                             size_vec&, message&, uint32_t, detail::int_list<>) {
@@ -325,6 +389,55 @@ public:
     return  size && (*size > 0) ? *size : default_size;
   }
 
+  /*** handle arguments for asynchronous command ***/
+
+  void set_kernel_arguments(message&, mem_ref_tuple&, std::vector<cl_event>&,
+                            detail::int_list<>) {
+    // nop
+  }
+
+  template <long I, long... Is>
+  void set_kernel_arguments(message& msg, mem_ref_tuple& refs,
+                            std::vector<cl_event>& events,
+                            detail::int_list<I, Is...>) {
+    using mem_type = typename detail::tl_at<mem_ref_types, I>::type;
+    auto mem = msg.get_as<mem_type>(I);
+    auto event = mem.take_event();
+    if (event != nullptr)
+      events.push_back(event);
+    get<I>(refs) = mem;
+    // TODO: check if device used for execution is the same as for the
+    //       mem_ref, should we try to transfer memory in such cases?
+    switch (mem.location()) {
+      case placement::local_mem: {
+        v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(),
+                         static_cast<unsigned>(I),
+                         sizeof(typename mem_type::value_type) * mem.size(),
+                         nullptr);
+        break;
+      }
+      case placement::private_mem: {
+        auto val = mem.value();
+        CAF_ASSERT(val);
+        v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(),
+                         static_cast<unsigned>(I),
+                         sizeof(typename mem_type::value_type),
+                         static_cast<void*>(&val.value()));
+        break;
+      }
+      case placement::global_mem: {
+        v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(),
+                         static_cast<unsigned>(I),
+                         sizeof(cl_mem), static_cast<void*>(&mem.get()));
+        break;
+      }
+      case placement::uninitialized:
+        CAF_LOG_ERROR("actor facade received uninitialized memory.");
+        break;
+    }
+    set_kernel_arguments(msg, refs, events, detail::int_list<Is...>{});
+  }
+
   kernel_ptr kernel_;
   program_ptr program_;
   context_ptr context_;
@@ -338,5 +451,5 @@ public:
 
 } // namespace opencl
 } // namespace caf
-#endif // CAF_OPENCL_ACTOR_FACADE_HPP
+#endif // CAF_OPENCL_OPENCL_ACTOR_HPP
 

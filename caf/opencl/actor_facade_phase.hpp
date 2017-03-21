@@ -155,7 +155,8 @@ public:
     auto cmd = make_counted<async_command_type>(std::move(hdl),
                                           actor_cast<strong_actor_ptr>(this),
                                           std::move(events),
-                                          std::move(refs));
+                                          std::move(refs),
+                                          spawn_cfg_);
     cmd->enqueue();
   }
 

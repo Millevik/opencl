@@ -47,11 +47,13 @@ public:
   async_command(std::tuple<strong_actor_ptr,message_id> handle,
                 strong_actor_ptr facade,
                 std::vector<cl_event> events,
-                std::tuple<Ts...> refs)
+                std::tuple<Ts...> refs,
+                spawn_config config)
     : handle_(std::move(handle)),
       actor_facade_(std::move(facade)),
       events_(std::move(events)),
-      refs_(std::move(refs)) {
+      refs_(std::move(refs)),
+      config_(std::move(config)) {
     // nop
   }
 
@@ -74,12 +76,13 @@ public:
       static_cast<FacadeType*>(actor_cast<abstract_actor*>(actor_facade_));
     auto err = clEnqueueNDRangeKernel(
       facade->queue_.get(), facade->kernel_.get(),
-      static_cast<cl_uint>(facade->spawn_cfg_.dimensions().size()),
-      data_or_nullptr(facade->spawn_cfg_.offsets()),
-      data_or_nullptr(facade->spawn_cfg_.dimensions()),
-      data_or_nullptr(facade->spawn_cfg_.local_dimensions()),
+      static_cast<cl_uint>(config_.dimensions().size()),
+      data_or_nullptr(config_.offsets()),
+      data_or_nullptr(config_.dimensions()),
+      data_or_nullptr(config_.local_dimensions()),
       static_cast<cl_uint>(events_.size()),
-      (events_.empty() ? nullptr : events_.data()), &execution_
+      (events_.empty() ? nullptr : events_.data()),
+      &execution_
     );
     if (err != CL_SUCCESS) {
       CAF_LOG_ERROR("clEnqueueNDRangeKernel: "
@@ -116,6 +119,7 @@ private:
   std::vector<cl_event> events_;
   std::tuple<Ts...> refs_;
   cl_event execution_;
+  spawn_config config_;
 };
 
 } // namespace opencl

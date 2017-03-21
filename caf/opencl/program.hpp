@@ -41,6 +41,8 @@ public:
   friend class actor_facade;
   template <class... Ts>
   friend class actor_facade_phase;
+  template <class... Ts>
+  friend class opencl_actor;
 
 private:
   program(context_ptr context, command_queue_ptr queue, program_ptr prog,

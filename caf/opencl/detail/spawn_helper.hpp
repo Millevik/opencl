@@ -54,6 +54,32 @@ struct cl_spawn_helper {
   }
 };
 
+template <class... Ts>
+struct cl_spawn_helper_new {
+  using impl = opencl::opencl_actor<Ts...>;
+  using map_in_fun = std::function<optional<message> (message&)>;
+  using map_out_fun = typename impl::output_mapping;
+
+  actor operator()(actor_config actor_cfg, const opencl::program& p,
+                   const char* fn, const opencl::spawn_config& spawn_cfg,
+                   Ts&&... xs) const {
+    return actor_cast<actor>(impl::create(std::move(actor_cfg),
+                                          p, fn, spawn_cfg,
+                                          map_in_fun{}, map_out_fun{},
+                                          std::move(xs)...));
+  }
+  actor operator()(actor_config actor_cfg, const opencl::program& p,
+                   const char* fn, const opencl::spawn_config& spawn_cfg,
+                   map_in_fun map_input, map_out_fun map_output,
+                   Ts&&... xs) const {
+    return actor_cast<actor>(impl::create(std::move(actor_cfg),
+                                          p, fn, spawn_cfg,
+                                          std::move(map_input),
+                                          std::move(map_output),
+                                          std::move(xs)...));
+  }
+};
+
 } // namespace detail
 } // namespace opencl
 } // namespace caf

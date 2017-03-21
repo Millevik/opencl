@@ -65,6 +65,8 @@ public:
   friend struct msg_adding_event;
   template <class... Ts>
   friend class actor_facade_phase;
+  template <class... Ts>
+  friend class opencl_actor;
 
   expected<std::vector<T>> data(optional<size_t> result_size = none) {
     switch (location_) {
