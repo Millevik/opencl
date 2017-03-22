@@ -52,7 +52,7 @@ public:
     cl_event event = v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
                                      queue_.get(), buffer, blocking,
                                      cl_uint{0}, buffer_size, data.data());
-    return mem_ref<T>{num_elements, placement::global_mem, this,
+    return mem_ref<T>{num_elements, placement::global_mem, queue_,
                       std::move(buffer), flags, event, false};
     // TODO: save ref to mem_ref and clean up on destruction?
   }
@@ -63,7 +63,7 @@ public:
                               cl_mem_flags flags = buffer_type::scratch_space) {
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(), flags,
                         sizeof(T) * size, nullptr);
-    return mem_ref<T>{size, placement::global_mem, this, std::move(buffer),
+    return mem_ref<T>{size, placement::global_mem, queue_, std::move(buffer),
                       flags, nullptr};
     // TODO: save ref to mem_ref and clean up on destruction?
   }
@@ -72,14 +72,14 @@ public:
   /// This argument cannot be accessed from the CPU context
   template <class T>
   mem_ref<T> local_argument(size_t size) {
-    return mem_ref<T>{size, placement::local_mem, this, nullptr,
+    return mem_ref<T>{size, placement::local_mem, queue_, nullptr,
                       CL_MEM_HOST_NO_ACCESS, nullptr};
   }
 
   /// Create a private argument, which is only a single value.
   template <class T>
   mem_ref<T> private_argument(T value) {
-    return mem_ref<T>(1, placement::private_mem, this, nullptr,
+    return mem_ref<T>(1, placement::private_mem, queue_, nullptr,
                       CL_MEM_HOST_NO_ACCESS, nullptr, false, std::move(value));
   }
 

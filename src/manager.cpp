@@ -105,7 +105,7 @@ program manager::create_program_from_file(const char* path, const char* options,
 }
 
 program manager::create_program(const char* kernel_source, const char* options,
-                                 uint32_t device_id) {
+                                uint32_t device_id) {
   auto dev = get_device(device_id);
   if (!dev) {
     ostringstream oss;

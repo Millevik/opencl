@@ -27,8 +27,14 @@
 #include "caf/message.hpp"
 #include "caf/optional.hpp"
 
+#include "caf/opencl/mem_ref.hpp"
+
 namespace caf {
 namespace opencl {
+
+/// Tag class to mark arguments received in a messages as reference or value
+struct val { };
+struct mref { };
 
 /// Use as a default way to calculate output size. 0 will be set to the number
 /// of work items at runtime.
@@ -40,19 +46,23 @@ struct dummy_size_calculator {
 };
 
 /// Mark an a spawn_cl template argument as input only
-template <class Arg>
+template <class Arg, class Tag = val>
 struct in {
+  using tag_type = Tag;
   using arg_type = typename std::decay<Arg>::type;
 };
 
 /// Mark an a spawn_cl template argument as input and output
-template <class Arg>
+template <class Arg, class TagIn = val, class TagOut = val>
 struct in_out {
+  using tag_in_type = TagIn;
+  using tag_out_type = TagOut;
   using arg_type = typename std::decay<Arg>::type;
 };
 
-template <class Arg>
+template <class Arg, class Tag = val>
 struct out {
+  using tag_type = Tag;
   out() = default;
   template <class F>
   out(F fun) {
@@ -252,6 +262,83 @@ template <class T>
 struct extract_type<priv<T>> {
   using type = typename std::decay<typename carr_to_vec<T>::type>::type;
 };
+
+/// extract type expected in an incoming message
+template <class T>
+struct extract_input_type { };
+
+template <class Arg>
+struct extract_input_type<in<Arg, val>> {
+  using type = std::vector<Arg>;
+};
+
+template <class Arg>
+struct extract_input_type<in<Arg, mref>> {
+  using type = opencl::mem_ref<Arg>;
+};
+
+template <class Arg, class TagOut>
+struct extract_input_type<in_out<Arg, val, TagOut>> {
+  using type = std::vector<Arg>;
+};
+
+template <class Arg, class TagOut>
+struct extract_input_type<in_out<Arg, mref, TagOut>> {
+  using type = opencl::mem_ref<Arg>;
+};
+
+/// extract type sent in an outgoing message
+template <class T>
+struct extract_output_type { };
+
+template <class Arg>
+struct extract_output_type<out<Arg, val>> {
+  using type = std::vector<Arg>;
+};
+
+template <class Arg>
+struct extract_output_type<out<Arg, mref>> {
+  using type = opencl::mem_ref<Arg>;
+};
+
+template <class Arg, class TagIn>
+struct extract_output_type<in_out<Arg, TagIn, val>> {
+  using type = std::vector<Arg>;
+};
+
+template <class Arg, class TagIn>
+struct extract_output_type<in_out<Arg, TagIn, mref>> {
+  using type = opencl::mem_ref<Arg>;
+};
+
+/// extract input tag
+template <class T>
+struct extract_input_tag { };
+
+template <class Arg, class Tag>
+struct extract_input_tag<in<Arg, Tag>> {
+  using tag = Tag;
+};
+
+template <class Arg, class TagIn, class TagOut>
+struct extract_input_tag<in_out<Arg, TagIn, TagOut>> {
+  using tag = TagIn;
+};
+
+/// extract output tag
+template <class T>
+struct extract_output_tag { };
+
+template <class Arg, class Tag>
+struct extract_output_tag<out<Arg, Tag>> {
+  using tag = Tag;
+};
+
+template <class Arg, class TagIn, class TagOut>
+struct extract_output_tag<in_out<Arg, TagIn, TagOut>> {
+  using tag = TagOut;
+};
+
 
 /// Create the return message from tuple arumgent
 struct message_from_results {

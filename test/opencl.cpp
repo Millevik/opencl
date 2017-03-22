@@ -647,43 +647,15 @@ void test_opencl_actor(actor_system& sys) {
     CAF_ERROR("unexpected message" << x.content().stringify());
     return sec::unexpected_message;
   };
-  CAF_MESSAGE("Testing basic opencl actor behavior.");
   const ivec expected1{ 56,  62,  68,  74, 152, 174, 196, 218,
                        248, 286, 324, 362, 344, 398, 452, 506};
-  auto w1 = mngr.spawn_new(
-    prog, kn_matrix,
-    opencl::spawn_config{dims{matrix_size, matrix_size}},
-    opencl::in<int*>{}, opencl::out<int*>{}
-  );
+  auto conf = opencl::spawn_config{dims{matrix_size, matrix_size}};
+  auto w1 = mngr.spawn_new(prog, kn_matrix, conf, in<int,val>{}, out<int,val>{});
   self->send(w1, make_iota_vector<int>(matrix_size * matrix_size));
   self->receive([&](const ivec& result) {
       check_vector_results("Simple matrix multiplication using vectors"
                            " (kernel wrapped in program)",
                            expected1, result);
-    }, others >> wrong_msg
-  );
-  CAF_MESSAGE("Testing opencl actor stage behavior.");
-  ivec input = make_iota_vector<int>(problem_size);
-  ivec expected{input};
-  for_each(begin(expected), end(expected), [](int& val) { val *= 2; });
-  auto conf = spawn_config{dims{input.size()}, {}, {}, true};
-  auto worker = mngr.spawn_new(prog, kn_inout, conf, opencl::in_out<int*>{});
-  auto buf = dev.global_argument(input);
-  CAF_CHECK(buf.size(), input.size());
-  self->send(worker, buf);
-  self->receive([&](mem_ref<int>& ref) {
-      auto res = ref.data();
-      CAF_CHECK(res);
-      check_vector_results("Testing opencl actor stage", expected, *res);
-    }, others >> wrong_msg
-  );
-  for_each(begin(expected), end(expected), [](int& val) { val *= 2; });
-  self->send(worker, buf);
-  self->receive(
-    [&](mem_ref<int>& ref) {
-      auto res = ref.data();
-      CAF_CHECK(res);
-      check_vector_results("Testing phase one", expected, *res);
     }, others >> wrong_msg
   );
 }

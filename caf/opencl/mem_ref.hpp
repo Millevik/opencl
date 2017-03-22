@@ -27,7 +27,6 @@
 #include "caf/optional.hpp"
 #include "caf/ref_counted.hpp"
 
-#include "caf/opencl/device.hpp"
 #include "caf/opencl/smart_ptr.hpp"
 
 namespace caf {
@@ -61,7 +60,6 @@ class mem_ref {
 public:
   using value_type = T;
 
-  friend class device;
   friend struct msg_adding_event;
   template <class... Ts>
   friend class actor_facade_phase;
@@ -84,7 +82,6 @@ public:
           return make_error(sec::runtime_error, "No memory assigned.");
         if (result_size && *result_size > num_elements_)
           return make_error(sec::runtime_error, "Buffer has less elements.");
-        command_queue_ptr queue = device_->queue_;
         auto num_elements = (result_size ? *result_size : num_elements_);
         auto buffer_size = sizeof(T) * num_elements;
         std::vector<T> buffer(num_elements);
@@ -92,7 +89,7 @@ public:
         std::vector<cl_event> prev_events;
         if (event_ != nullptr)
           prev_events.push_back(event_);
-        auto err = clEnqueueReadBuffer(queue.get(), memory_.get(), CL_TRUE,
+        auto err = clEnqueueReadBuffer(queue_.get(), memory_.get(), CL_TRUE,
                                        0, buffer_size, buffer.data(),
                                        static_cast<cl_uint>(prev_events.size()),
                                        prev_events.data(), &event);
@@ -124,15 +121,16 @@ public:
   }
 
   /*
+  
+  /// wait for the event if available
+  bool sync() {
+
+  }
+
   void data(const actor&, atom) {
     // asynchronous function to read data from device
     // sends the results to dst with the marker atom
     throw std::runtime_error("Asynchronous mem_ref::data() not implemented");
-  }
-
-  void move_to(device* dev) {
-    // move buffer to different device
-    // Introduced in OpenCL 1.2: clEnqueueMigrateMemObjects
   }
   */
 
@@ -147,14 +145,13 @@ public:
       case placement::global_mem: {
         if (!memory_)
           return make_error(sec::runtime_error, "No memory assigned.");
-        command_queue_ptr queue = device_->queue_;
         auto buffer_size = sizeof(T) * num_elements_;
         cl_event event;
         cl_mem buffer;
         std::vector<cl_event> prev_events;
         if (event_ != nullptr)
           prev_events.push_back(event_);
-        auto err = clEnqueueCopyBuffer(queue.get(), memory_.get(), buffer,
+        auto err = clEnqueueCopyBuffer(queue_.get(), memory_.get(), buffer,
                                        0, 0, // no offset for now
                                        buffer_size, prev_events.size(),
                                        prev_events.data(), &event);
@@ -162,7 +159,7 @@ public:
           return make_error(sec::runtime_error, get_opencl_error(err));
         // decrements the previous event we used for waiting above
         set_event(event, false);
-        return mem_ref<T>(num_elements_, location_, device_, std::move(buffer),
+        return mem_ref<T>(num_elements_, location_, queue_, std::move(buffer),
                           access_, event, true);
       }
     }
@@ -193,20 +190,20 @@ public:
     : num_elements_{0},
       location_{placement::uninitialized},
       access_{CL_MEM_HOST_NO_ACCESS},
-      device_{nullptr},
+      queue_{nullptr},
       event_{nullptr},
       memory_{nullptr},
       value_{none} {
     // nop
   }
 
-  mem_ref(size_t num_elements, placement location, device* dev,
+  mem_ref(size_t num_elements, placement location, command_queue_ptr queue,
           mem_ptr memory, cl_mem_flags access, cl_event event,
           bool inc_event_ref = true, optional<T> value = none)
     : num_elements_{num_elements},
       location_{location},
       access_{access},
-      device_{dev},
+      queue_{queue},
       event_{event},
       memory_{memory},
       value_{std::move(value)} {
@@ -216,13 +213,13 @@ public:
 
   /// mem_ref assumes that the event passed to it already has an incremented
   /// reference count on the event.
-  mem_ref(size_t num_elements, placement location, device* dev,
+  mem_ref(size_t num_elements, placement location, command_queue_ptr queue,
           cl_mem memory, cl_mem_flags access, cl_event event,
           bool inc_event_ref = true, optional<T> value = none)
     : num_elements_{num_elements},
       location_{location},
       access_{access},
-      device_{dev},
+      queue_{queue},
       event_{event},
       memory_{memory},
       value_{std::move(value)} {
@@ -234,7 +231,7 @@ public:
     : num_elements_{other.num_elements_},
       location_{other.location_},
       access_{other.access_},
-      device_{other.device_},
+      queue_{other.queue_},
       event_{other.event_},
       memory_{other.memory_},
       value_{other.value_} {
@@ -247,7 +244,7 @@ public:
     num_elements_ = other.num_elements_;
     location_ = other.location_;
     access_ = other.access_;
-    device_ = other.device_;
+    queue_ = other.queue_;
     memory_ = other.memory_;
     value_ = other.value_;
     // decrement our previous event
@@ -263,7 +260,7 @@ public:
     num_elements_ = other.num_elements_;
     location_ = other.location_;
     access_ = other.access_;
-    device_ = other.device_;
+    queue_ = other.queue_;
     memory_ = other.memory_;
     value_ = other.value_;
     event_ = other.event_;
@@ -274,7 +271,7 @@ public:
     num_elements_ = other.num_elements_;
     location_ = other.location_;
     access_ = other.access_;
-    device_ = other.device_;
+    queue_ = other.queue_;
     memory_ = other.memory_;
     value_ = other.value_;
     event_ = other.event_;
@@ -291,7 +288,7 @@ public:
     std::swap(num_elements_, other.num_elements_);
     std::swap(location_, other.location_);
     std::swap(access_, other.access_);
-    std::swap(device_, other.device_);
+    std::swap(queue_, other.queue_);
     std::swap(event_, other.event_);
     memory_.swap(other.memory_);
     std::swap(value_, other.value_);
@@ -335,7 +332,7 @@ private:
   size_t num_elements_;
   placement location_;
   cl_mem_flags access_;
-  device* device_;
+  command_queue_ptr queue_;
   cl_event event_;
   mem_ptr memory_;
   optional<T> value_;

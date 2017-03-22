@@ -106,18 +106,16 @@ public:
   using arg_types = detail::type_list<Ts...>;
   using unpacked_types = typename detail::tl_map<arg_types, extract_type>::type;
 
-  using mem_ref_types = typename detail::tl_map<unpacked_types, to_mem_ref>::type;
-
   using input_wrapped_types =
     typename detail::tl_filter<arg_types, is_input_arg>::type;
   using input_types =
-    typename detail::tl_map<input_wrapped_types, extract_type>::type;
+    typename detail::tl_map<input_wrapped_types, extract_input_type>::type;
   using input_mapping = std::function<optional<message> (message&)>;
 
   using output_wrapped_types =
     typename detail::tl_filter<arg_types, is_output_arg>::type;
   using output_types =
-    typename detail::tl_map<output_wrapped_types, extract_type>::type;
+    typename detail::tl_map<output_wrapped_types, extract_output_type>::type;
   using output_mapping = typename output_function_sig<output_types>::type;
 
   typename detail::il_indices<arg_types>::type indices;
@@ -125,14 +123,7 @@ public:
   using evnt_vec = std::vector<cl_event>;
   using args_vec = std::vector<mem_ptr>;
   using size_vec = std::vector<size_t>;
-
-  using sync_command_type =
-    typename sync_command_sig<opencl_actor, output_types>::type;
-  using async_command_type =
-    typename async_command_sig<opencl_actor, mem_ref_types>::type;
-
-  using mem_ref_tuple =
-    typename tuple_type_of<mem_ref_types>::type;
+  using outp_tup = std::tuple<output_types>;
 
   const char* name() const override {
     return "OpenCL actor";
@@ -180,8 +171,8 @@ public:
                                            std::forward_as_tuple(xs...));
   }
 
-  void enqueue(strong_actor_ptr sender, message_id mid, message content,
-               execution_unit*) override {
+  void enqueue(strong_actor_ptr sender, message_id mid,
+               message content, execution_unit*) override {
     CAF_PUSH_AID(id());
     CAF_LOG_TRACE("");
     if (map_args_) {
@@ -190,44 +181,39 @@ public:
         return;
       content = std::move(*mapped);
     }
-    auto hdl = std::make_tuple(sender, mid.response_id());
-    if (config_.is_stage()) {
-      if (!content.match_elements(mem_ref_types{}))
-        return;
-      std::vector<cl_event> events;
-      mem_ref_tuple refs;
-      set_kernel_arguments(content, refs, events, indices);
-      auto cmd = make_counted<async_command_type>(
-        std::move(hdl),
-        actor_cast<strong_actor_ptr>(this),
-        std::move(events),
-        std::move(refs),
-        config_
-      );
-      cmd->enqueue();
-    } else {
-      if (!content.match_elements(input_types{}))
-        return;
-      evnt_vec events;
-      args_vec input_buffers;
-      args_vec output_buffers;
-      args_vec scratch_buffers;
-      size_vec result_sizes;
-      add_kernel_arguments(events, input_buffers, output_buffers,
-                           scratch_buffers, result_sizes, content,
-                           0u, indices);
-      auto cmd = make_counted<sync_command_type>(
-        std::move(hdl),
-        actor_cast<strong_actor_ptr>(this),
-        std::move(events),
-        std::move(input_buffers),
-        std::move(output_buffers),
-        std::move(scratch_buffers),
-        std::move(result_sizes),
-        std::move(content)
-      );
-      cmd->enqueue();
+    if (!content.match_elements(input_types{})) {
+      CAF_LOG_ERROR("Message types do not match the expected signature.");
+      return;
     }
+    auto hdl = std::make_tuple(sender, mid.response_id());
+    evnt_vec events;
+    args_vec input_buffers;
+    args_vec output_buffers;
+    args_vec scratch_buffers;
+    size_vec result_sizes;
+    add_kernel_arguments(events,          // accumulate events for execution
+                         input_buffers,   // opencl buffers included in in msg
+                         output_buffers,  // opencl buffers included in out msg
+                         scratch_buffers, // opencl only used here
+                         result_sizes,    // size of buffers to read back
+                         content,         // message content
+                         0u,              // position in input types
+                         indices);        // enable extraction of types from msg
+    /*
+    auto cmd = make_counted<sync_command_type>(
+      std::move(hdl),
+      actor_cast<strong_actor_ptr>(this),
+      std::move(events),
+      std::move(input_buffers),
+      std::move(output_buffers),
+      std::move(scratch_buffers),
+      std::move(result_sizes),
+      std::move(content),
+      conf_
+    );
+    cmd->enqueue();
+    */
+    std::cout << "Enqueue not implemented" << std::endl;
   }
 
   void enqueue(mailbox_element_ptr ptr, execution_unit* eu) override {
@@ -238,7 +224,7 @@ public:
 
   opencl_actor(actor_config actor_cfg,
                const program& prog, kernel_ptr kernel,
-               spawn_config  spawn_cfg,
+               spawn_config spawn_cfg,
                input_mapping map_args, output_mapping map_result,
                std::tuple<Ts...> xs)
       : monitorable_actor(actor_cfg),
@@ -249,7 +235,7 @@ public:
         config_(std::move(spawn_cfg)),
         map_args_(std::move(map_args)),
         map_results_(std::move(map_result)),
-        argument_types_(std::move(xs)) {
+        kernel_signature_(std::move(xs)) {
     CAF_LOG_TRACE(CAF_ARG(this->id()));
     default_output_size_ = std::accumulate(config_.dimensions().begin(),
                                            config_.dimensions().end(),
@@ -272,18 +258,18 @@ public:
                             args_vec& output_buffers, args_vec& scratch_buffers,
                             size_vec& sizes, message& msg, uint32_t pos,
                             detail::int_list<I, Is...>) {
-    create_buffer<I>(std::get<I>(argument_types_), events, sizes, input_buffers,
+    create_buffer<I>(std::get<I>(kernel_signature_), events, sizes, input_buffers,
                      output_buffers, scratch_buffers, msg, pos);
     add_kernel_arguments(events, input_buffers, output_buffers, scratch_buffers,
                          sizes, msg, pos, detail::int_list<Is...>{});
   }
 
   template <long I, class T>
-  void create_buffer(const in<T>&, evnt_vec& events, size_vec&,
+  void create_buffer(const in<T, val>&, evnt_vec& events, size_vec&,
                      args_vec& input_buffers, args_vec&, args_vec&,
                      message& msg, uint32_t& pos) {
-    using container_type = typename detail::tl_at<unpacked_types, I>::type;
-    using value_type = typename container_type::value_type;
+    using value_type = typename detail::tl_at<unpacked_types, I>::type;
+    using container_type = std::vector<value_type>;
     auto& value = msg.get_as<container_type>(pos++);
     auto size = value.size();
     size_t buffer_size = sizeof(value_type) * size;
@@ -301,6 +287,27 @@ public:
              sizeof(cl_mem), static_cast<void*>(&input_buffers.back()));
   }
 
+  template <long I, class T>
+  void create_buffer(const in<T, mref>&, evnt_vec& events, size_vec&,
+                     args_vec&, args_vec&, args_vec&,
+                     message& msg, uint32_t& pos) {
+    using value_type = typename detail::tl_at<unpacked_types, I>::type;
+    using container_type = mem_ref<value_type>;
+    auto mem = msg.get_as<container_type>(pos++);
+    auto event = mem.take_event();
+    if (event != nullptr)
+      events.push_back(event);
+    // TODO: Do we need to save the the reference or is passing the message
+    // to the command enough?
+    // TODO: check if device used for execution is the same as for the
+    //       mem_ref, should we try to transfer memory in such cases?
+    CAF_ASSERT(mem.location() == placement::global_mem);
+    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(),
+                     static_cast<unsigned>(I),
+                     sizeof(cl_mem), static_cast<void*>(&mem.get()));
+  }
+
+  /*
   template <long I, class T>
   void create_buffer(const in_out<T>&, evnt_vec& events, size_vec& sizes,
                      args_vec&, args_vec& output_buffers, args_vec&,
@@ -323,13 +330,13 @@ public:
              sizeof(cl_mem), static_cast<void*>(&output_buffers.back()));
     sizes.push_back(size);
   }
+  */
 
-  template <long I, class T>
-  void create_buffer(const out<T>& wrapper, evnt_vec&, size_vec& sizes,
+  template <long I, class T, class Tag>
+  void create_buffer(const out<T,Tag>& wrapper, evnt_vec&, size_vec& sizes,
                      args_vec&, args_vec& output_buffers, args_vec&,
                      message& msg, uint32_t&) {
-    using container_type = typename detail::tl_at<unpacked_types, I>::type;
-    using value_type = typename container_type::value_type;
+    using value_type = typename detail::tl_at<unpacked_types, I>::type;
     auto size = get_size_for_argument(wrapper, msg, default_output_size_);
     auto buffer_size = sizeof(value_type) * size;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
@@ -343,6 +350,7 @@ public:
     sizes.push_back(size);
   }
 
+/*
   template <long I, class T>
   void create_buffer(const scratch<T>& wrapper, evnt_vec&, size_vec&,
                      args_vec&, args_vec&, args_vec& scratch_buffers,
@@ -382,6 +390,7 @@ public:
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              value_size, static_cast<void*>(&value));
   }
+  */
 
   template <class Fun>
   size_t get_size_for_argument(Fun& f, message& m, size_t default_size) {
@@ -391,6 +400,7 @@ public:
 
   /*** handle arguments for asynchronous command ***/
 
+  /*
   void set_kernel_arguments(message&, mem_ref_tuple&, std::vector<cl_event>&,
                             detail::int_list<>) {
     // nop
@@ -437,6 +447,7 @@ public:
     }
     set_kernel_arguments(msg, refs, events, detail::int_list<Is...>{});
   }
+  */
 
   kernel_ptr kernel_;
   program_ptr program_;
@@ -445,7 +456,7 @@ public:
   spawn_config config_;
   input_mapping map_args_;
   output_mapping map_results_;
-  std::tuple<Ts...> argument_types_;
+  std::tuple<Ts...> kernel_signature_;
   size_t default_output_size_;
 };
 
