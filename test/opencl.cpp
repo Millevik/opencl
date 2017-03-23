@@ -480,13 +480,10 @@ void test_arguments(actor_system& sys) {
     expected_local[i] = last;
     last += tmp;
   }
-  auto local_buffer_size = [=](const ivec&) {
-    return la_local;
-  };
   auto work_local = mngr.spawn(kernel_source, kn_local,
                                spawn_config{dims{la_global}, {}, dims{la_local}},
                                opencl::in_out<ivec>{},
-                               opencl::local<ivec>{local_buffer_size});
+                               opencl::local<ivec>{la_local});
   self->send(work_local, std::move(input_local));
   self->receive(
     [&](const ivec& result) {
@@ -497,7 +494,7 @@ void test_arguments(actor_system& sys) {
   input_local = make_iota_vector<int>(la_global);
   work_local = mngr.spawn(kernel_source, kn_order,
                           spawn_config{dims{la_global}, {}, dims{la_local}},
-                          opencl::local<ivec>{local_buffer_size},
+                          opencl::local<ivec>{la_local},
                           opencl::in_out<ivec>{});
   self->send(work_local, std::move(input_local));
   self->receive(
@@ -634,6 +631,52 @@ CAF_TEST(opencl_stages) {
   actor_system system{cfg};
   test_phases(system);
   system.await_all_actors_done();
+}
+
+CAF_TEST(opencl_argument_info) {
+  using base_t = int;
+  using in_arg_t = caf::detail::type_list<opencl::in<base_t>>;
+  using in_arg_info_t = typename cl_arg_info_list<in_arg_t>::type;
+  using in_arg_wrap_t = typename caf::detail::tl_head<in_arg_info_t>::type;
+  static_assert(in_arg_wrap_t::in_pos == 0, "In-index for `in` wrong.");
+  static_assert(in_arg_wrap_t::out_pos == -1, "Out-index for `in` wrong.");
+  using out_arg_t = caf::detail::type_list<opencl::out<base_t>>;
+  using out_arg_info_t = typename cl_arg_info_list<out_arg_t>::type;
+  using out_arg_wrap_t = typename caf::detail::tl_head<out_arg_info_t>::type;
+  static_assert(out_arg_wrap_t::in_pos == -1, "In-index for `out` wrong.");
+  static_assert(out_arg_wrap_t::out_pos == 0, "Out-index for `out` wrong.");
+  using io_arg_t = caf::detail::type_list<opencl::in_out<base_t>>;
+  using io_arg_info_t = typename cl_arg_info_list<io_arg_t>::type;
+  using io_arg_wrap_t = typename caf::detail::tl_head<io_arg_info_t>::type;
+  static_assert(io_arg_wrap_t::in_pos == 0, "In-index for `in_out` wrong.");
+  static_assert(io_arg_wrap_t::out_pos == 0, "Out-index for `in_out` wrong.");
+  using arg_list_t = caf::detail::type_list<opencl::in<base_t>,
+                                            opencl::out<base_t>,
+                                            opencl::local<base_t>,
+                                            opencl::in_out<base_t>,
+                                            opencl::priv<base_t>,
+                                            opencl::priv<base_t, val>>;
+  using arg_info_list_t = typename cl_arg_info_list<arg_list_t>::type;
+  using arg_info_0_t = typename caf::detail::tl_at<arg_info_list_t,0>::type;
+  static_assert(arg_info_0_t::in_pos == 0, "In-index for `in` wrong.");
+  static_assert(arg_info_0_t::out_pos == -1, "Out-index for `in` wrong.");
+  using arg_info_1_t = typename caf::detail::tl_at<arg_info_list_t,1>::type;
+  static_assert(arg_info_1_t::in_pos == -1, "In-index for `out` wrong.");
+  static_assert(arg_info_1_t::out_pos == 0, "Out-index for `out` wrong.");
+  using arg_info_2_t = typename caf::detail::tl_at<arg_info_list_t,2>::type;
+  static_assert(arg_info_2_t::in_pos == -1, "In-index for `local` wrong.");
+  static_assert(arg_info_2_t::out_pos == -1, "Out-index for `local` wrong.");
+  using arg_info_3_t = typename caf::detail::tl_at<arg_info_list_t,3>::type;
+  static_assert(arg_info_3_t::in_pos == 1, "In-index for `in_out` wrong.");
+  static_assert(arg_info_3_t::out_pos == 1, "Out-index for `in_out` wrong.");
+  using arg_info_4_t = typename caf::detail::tl_at<arg_info_list_t,4>::type;
+  static_assert(arg_info_4_t::in_pos == -1, "In-index for `priv` wrong.");
+  static_assert(arg_info_4_t::out_pos == -1, "Out-index for `priv` wrong.");
+  using arg_info_5_t = typename caf::detail::tl_at<arg_info_list_t,5>::type;
+  static_assert(arg_info_5_t::in_pos == 2, "In-index for `priv` wrong.");
+  static_assert(arg_info_5_t::out_pos == -1, "Out-index for `priv` wrong.");
+  // gives the test some output.
+  CAF_CHECK_EQUAL(std::string(typeid(arg_info_3_t).name()), "1");
 }
 
 void test_opencl_actor(actor_system& sys) {

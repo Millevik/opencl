@@ -118,6 +118,8 @@ public:
     typename detail::tl_map<output_wrapped_types, extract_output_type>::type;
   using output_mapping = typename output_function_sig<output_types>::type;
 
+  using processing_list = typename cl_arg_info_list<arg_types>::type;
+
   typename detail::il_indices<arg_types>::type indices;
 
   using evnt_vec = std::vector<cl_event>;
@@ -258,13 +260,18 @@ public:
                             args_vec& output_buffers, args_vec& scratch_buffers,
                             size_vec& sizes, message& msg, uint32_t pos,
                             detail::int_list<I, Is...>) {
-    create_buffer<I>(std::get<I>(kernel_signature_), events, sizes, input_buffers,
-                     output_buffers, scratch_buffers, msg, pos);
+    using arg_type = typename caf::detail::tl_at<processing_list,I>::type;
+    // TODO: In case of mem_refs, should we check if device used for execution
+    // is the same and should we try to transfer memory in such cases?
+    create_buffer<I, arg_type::in_pos, arg_type::out_pos>(
+      std::get<I>(kernel_signature_), events, sizes,
+      input_buffers, output_buffers, scratch_buffers, msg, pos
+    );
     add_kernel_arguments(events, input_buffers, output_buffers, scratch_buffers,
                          sizes, msg, pos, detail::int_list<Is...>{});
   }
 
-  template <long I, class T>
+  template <long I, int InPos, int OutPos, class T>
   void create_buffer(const in<T, val>&, evnt_vec& events, size_vec&,
                      args_vec& input_buffers, args_vec&, args_vec&,
                      message& msg, uint32_t& pos) {
@@ -274,7 +281,7 @@ public:
     auto size = value.size();
     size_t buffer_size = sizeof(value_type) * size;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
-                        cl_mem_flags{CL_MEM_READ_WRITE | CL_MEM_HOST_WRITE_ONLY},
+                        cl_mem_flags{CL_MEM_READ_WRITE},
                         buffer_size, nullptr);
     auto event = v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
                                  queue_.get(), buffer, cl_bool{CL_FALSE},
@@ -287,7 +294,7 @@ public:
              sizeof(cl_mem), static_cast<void*>(&input_buffers.back()));
   }
 
-  template <long I, class T>
+  template <long I, int InPos, int OutPos, class T>
   void create_buffer(const in<T, mref>&, evnt_vec& events, size_vec&,
                      args_vec&, args_vec&, args_vec&,
                      message& msg, uint32_t& pos) {
@@ -299,21 +306,17 @@ public:
       events.push_back(event);
     // TODO: Do we need to save the the reference or is passing the message
     // to the command enough?
-    // TODO: check if device used for execution is the same as for the
-    //       mem_ref, should we try to transfer memory in such cases?
     CAF_ASSERT(mem.location() == placement::global_mem);
-    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(),
-                     static_cast<unsigned>(I),
-                     sizeof(cl_mem), static_cast<void*>(&mem.get()));
+    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
+             sizeof(cl_mem), static_cast<void*>(&mem.get()));
   }
 
-  /*
-  template <long I, class T>
-  void create_buffer(const in_out<T>&, evnt_vec& events, size_vec& sizes,
-                     args_vec&, args_vec& output_buffers, args_vec&,
-                     message& msg, uint32_t& pos) {
-    using container_type = typename detail::tl_at<unpacked_types, I>::type;
-    using value_type = typename container_type::value_type;
+  template <long I, int InPos, int OutPos, class T>
+  void create_buffer(const in_out<T,val,val>&, evnt_vec& events,
+                     size_vec& sizes, args_vec&, args_vec& output_buffers,
+                     args_vec&, message& msg, uint32_t& pos) {
+    using value_type = typename detail::tl_at<unpacked_types, I>::type;
+    using container_type = std::vector<value_type>;
     auto& value = msg.get_as<container_type>(pos++);
     auto size = value.size();
     size_t buffer_size = sizeof(value_type) * size;
@@ -330,10 +333,46 @@ public:
              sizeof(cl_mem), static_cast<void*>(&output_buffers.back()));
     sizes.push_back(size);
   }
-  */
 
-  template <long I, class T, class Tag>
-  void create_buffer(const out<T,Tag>& wrapper, evnt_vec&, size_vec& sizes,
+  template <long I, int InPos, int OutPos, class T>
+  void create_buffer(const in_out<T,val,mref>&, evnt_vec&, size_vec&, args_vec&,
+                     args_vec&, args_vec&, message&, uint32_t&) {
+    // TODO: find a way to create the output tuple.
+  }
+
+  template <long I, int InPos, int OutPos, class T>
+  void create_buffer(const in_out<T,mref,val>&, evnt_vec& events,
+                     size_vec& sizes, args_vec&, args_vec& output_buffers,
+                     args_vec&, message& msg, uint32_t& pos) {
+    using value_type = typename detail::tl_at<unpacked_types, I>::type;
+    using container_type = mem_ref<value_type>;
+    auto mem = msg.get_as<container_type>(pos++);
+    auto event = mem.take_event();
+    if (event != nullptr)
+      events.push_back(event);
+    CAF_ASSERT(mem.location() == placement::global_mem);
+    output_buffers.push_back(mem.get());
+    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
+             sizeof(cl_mem), static_cast<void*>(&output_buffers.back()));
+    sizes.push_back(sizeof(value_type) * mem.size());
+  }
+
+  template <long I, int InPos, int OutPos, class T>
+  void create_buffer(const in_out<T,mref,mref>&, evnt_vec& events, size_vec&,
+                     args_vec&, args_vec&, args_vec&, message& msg,
+                     uint32_t& pos) {
+    using value_type = typename detail::tl_at<unpacked_types, I>::type;
+    using container_type = mem_ref<value_type>;
+    auto mem = msg.get_as<container_type>(pos++);
+    auto event = mem.take_event();
+    if (event != nullptr)
+      events.push_back(event);
+    CAF_ASSERT(mem.location() == placement::global_mem);
+    // TODO: find a way to create the output tuple.
+  }
+
+  template <long I, int InPos, int OutPos, class T>
+  void create_buffer(const out<T,val>& wrapper, evnt_vec&, size_vec& sizes,
                      args_vec&, args_vec& output_buffers, args_vec&,
                      message& msg, uint32_t&) {
     using value_type = typename detail::tl_at<unpacked_types, I>::type;
@@ -350,13 +389,17 @@ public:
     sizes.push_back(size);
   }
 
-/*
-  template <long I, class T>
+  template <long I, int InPos, int OutPos, class T>
+  void create_buffer(const out<T,mref>&, evnt_vec&, size_vec&, args_vec&,
+                     args_vec&, args_vec&, message&, uint32_t&) {
+    // TODO: find a way to create the output tuple.
+  }
+
+  template <long I, int InPos, int OutPos, class T>
   void create_buffer(const scratch<T>& wrapper, evnt_vec&, size_vec&,
                      args_vec&, args_vec&, args_vec& scratch_buffers,
                      message& msg, uint32_t&) {
-    using container_type = typename detail::tl_at<unpacked_types, I>::type;
-    using value_type = typename container_type::value_type;
+    using value_type = typename detail::tl_at<unpacked_types, I>::type;
     auto size = get_size_for_argument(wrapper, msg, default_output_size_);
     auto buffer_size = sizeof(value_type) * size;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
@@ -369,20 +412,19 @@ public:
              sizeof(cl_mem), static_cast<void*>(&scratch_buffers.back()));
   }
 
-  template <long I, class T>
+  template <long I, int InPos, int OutPos, class T>
   void create_buffer(const local<T>& wrapper, evnt_vec&, size_vec&,
                      args_vec&, args_vec&, args_vec&, message& msg,
                      uint32_t&) {
-    using container_type = typename detail::tl_at<unpacked_types, I>::type;
-    using value_type = typename container_type::value_type;
-    auto size = get_size_for_argument(wrapper, msg, default_output_size_);
+    using value_type  = typename detail::tl_at<unpacked_types, I>::type;
+    auto size = wrapper(msg);
     auto buffer_size = sizeof(value_type) * size;
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              buffer_size, nullptr);
   }
 
-  template <long I, class T>
-  void create_buffer(const priv<T>& wrapper, evnt_vec&, size_vec&,
+  template <long I, int InPos, int OutPos, class T>
+  void create_buffer(const priv<T, hidden>& wrapper, evnt_vec&, size_vec&,
                      args_vec&, args_vec&, args_vec&, message& msg,
                      uint32_t&) {
     auto value_size = sizeof(T);
@@ -390,64 +432,23 @@ public:
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              value_size, static_cast<void*>(&value));
   }
-  */
+
+  template <long I, int InPos, int OutPos, class T>
+  void create_buffer(const priv<T, val>&, evnt_vec&, size_vec&,
+                     args_vec&, args_vec&, args_vec&, message& msg,
+                     uint32_t& pos) {
+    using value_type = typename detail::tl_at<unpacked_types, I>::type;
+    auto& value = msg.get_as<value_type>(pos++);
+    auto value_size = sizeof(value_type);
+    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
+             value_size, static_cast<void*>(&value));
+  }
 
   template <class Fun>
   size_t get_size_for_argument(Fun& f, message& m, size_t default_size) {
     auto size = f(m);
     return  size && (*size > 0) ? *size : default_size;
   }
-
-  /*** handle arguments for asynchronous command ***/
-
-  /*
-  void set_kernel_arguments(message&, mem_ref_tuple&, std::vector<cl_event>&,
-                            detail::int_list<>) {
-    // nop
-  }
-
-  template <long I, long... Is>
-  void set_kernel_arguments(message& msg, mem_ref_tuple& refs,
-                            std::vector<cl_event>& events,
-                            detail::int_list<I, Is...>) {
-    using mem_type = typename detail::tl_at<mem_ref_types, I>::type;
-    auto mem = msg.get_as<mem_type>(I);
-    auto event = mem.take_event();
-    if (event != nullptr)
-      events.push_back(event);
-    get<I>(refs) = mem;
-    // TODO: check if device used for execution is the same as for the
-    //       mem_ref, should we try to transfer memory in such cases?
-    switch (mem.location()) {
-      case placement::local_mem: {
-        v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(),
-                         static_cast<unsigned>(I),
-                         sizeof(typename mem_type::value_type) * mem.size(),
-                         nullptr);
-        break;
-      }
-      case placement::private_mem: {
-        auto val = mem.value();
-        CAF_ASSERT(val);
-        v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(),
-                         static_cast<unsigned>(I),
-                         sizeof(typename mem_type::value_type),
-                         static_cast<void*>(&val.value()));
-        break;
-      }
-      case placement::global_mem: {
-        v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(),
-                         static_cast<unsigned>(I),
-                         sizeof(cl_mem), static_cast<void*>(&mem.get()));
-        break;
-      }
-      case placement::uninitialized:
-        CAF_LOG_ERROR("actor facade received uninitialized memory.");
-        break;
-    }
-    set_kernel_arguments(msg, refs, events, detail::int_list<Is...>{});
-  }
-  */
 
   kernel_ptr kernel_;
   program_ptr program_;

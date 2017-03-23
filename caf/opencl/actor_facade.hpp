@@ -303,7 +303,7 @@ public:
                      uint32_t&) {
     using container_type = typename detail::tl_at<unpacked_types, I>::type;
     using value_type = typename container_type::value_type;
-    auto size = get_size_for_argument(wrapper, msg, default_output_size_);
+    auto size = wrapper(msg);
     auto buffer_size = sizeof(value_type) * size;
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              buffer_size, nullptr);

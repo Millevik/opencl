@@ -29,23 +29,19 @@ class spawn_config {
 public:
   spawn_config(const opencl::dim_vec& dims,
                const opencl::dim_vec& offset = {},
-               const opencl::dim_vec& local_dims = {},
-               bool is_stage = false)
+               const opencl::dim_vec& local_dims = {})
     : dims_{dims},
       offset_{offset},
-      local_dims_{local_dims},
-      is_stage_{is_stage} {
+      local_dims_{local_dims} {
     // nop
   }
 
   spawn_config(opencl::dim_vec&& dims,
                opencl::dim_vec&& offset = {},
-               opencl::dim_vec&& local_dims = {},
-               bool is_stage = false)
+               opencl::dim_vec&& local_dims = {})
     : dims_{std::move(dims)},
       offset_{std::move(offset)},
-      local_dims_{std::move(local_dims)},
-      is_stage_{is_stage} {
+      local_dims_{std::move(local_dims)} {
     // nop
   }
 
@@ -61,15 +57,10 @@ public:
     return local_dims_;
   }
 
-  bool is_stage() const {
-    return is_stage_;
-  }
-
 private:
   const opencl::dim_vec dims_;
   const opencl::dim_vec offset_;
   const opencl::dim_vec local_dims_;
-  bool is_stage_;
 };
 
 } // namespace opencl

@@ -32,9 +32,18 @@
 namespace caf {
 namespace opencl {
 
-/// Tag class to mark arguments received in a messages as reference or value
+// Tag classes to mark arguments received in a messages as reference or value
+/// Arguments tagged as `val` are expected as a vector (or value in case
+/// of a private argument). 
 struct val { };
+
+/// Arguments tagged as `mref` are expected as mem_ref, which is can be returned
+/// by other opencl actors.
 struct mref { };
+
+/// Arguments tagged as `hidden` are created by the actor, using the config
+/// passed in the argument wrapper. Only available for local and priv arguments.
+struct hidden { };
 
 /// Use as a default way to calculate output size. 0 will be set to the number
 /// of work items at runtime.
@@ -48,6 +57,8 @@ struct dummy_size_calculator {
 /// Mark an a spawn_cl template argument as input only
 template <class Arg, class Tag = val>
 struct in {
+  static_assert(std::is_same<Tag,val>::value || std::is_same<Tag,mref>::value,
+                "Argument of type `in` must be passed as value or mem_ref.");
   using tag_type = Tag;
   using arg_type = typename std::decay<Arg>::type;
 };
@@ -55,6 +66,14 @@ struct in {
 /// Mark an a spawn_cl template argument as input and output
 template <class Arg, class TagIn = val, class TagOut = val>
 struct in_out {
+  static_assert(
+    std::is_same<TagIn,val>::value || std::is_same<TagIn,mref>::value,
+    "Argument of type `in_out` must be passed as value or mem_ref."
+  );
+  static_assert(
+    std::is_same<TagOut,val>::value || std::is_same<TagOut,mref>::value,
+    "Argument of type `in_out` must be returned as value or mem_ref."
+  );
   using tag_in_type = TagIn;
   using tag_out_type = TagOut;
   using arg_type = typename std::decay<Arg>::type;
@@ -62,7 +81,10 @@ struct in_out {
 
 template <class Arg, class Tag = val>
 struct out {
+  static_assert(std::is_same<Tag,val>::value || std::is_same<Tag,mref>::value,
+               "Argument of type `out` must be returned as value or mem_ref.");
   using tag_type = Tag;
+  using arg_type = typename std::decay<Arg>::type;
   out() = default;
   template <class F>
   out(F fun) {
@@ -84,6 +106,7 @@ struct out {
 
 template <class Arg>
 struct scratch {
+  using arg_type = typename std::decay<Arg>::type;
   scratch() = default;
   template <class F>
   scratch(F fun) {
@@ -107,9 +130,10 @@ struct scratch {
 /// requires a size that is calculated depending on the input.
 template <class Arg>
 struct local {
+  using arg_type = typename std::decay<Arg>::type;
   local() = default;
   template <class F>
-  local(F fun) {
+  local(size_t size, F fun) : size_(size) {
     fun_ = [fun](message& msg) -> optional<size_t> {
       auto res = msg.apply(fun);
       size_t result;
@@ -120,20 +144,34 @@ struct local {
       return none;
     };
   }
-  optional<size_t> operator()(message& msg) const {
-    return fun_ ? fun_(msg) : 0UL;
+  local(size_t size) : size_(size) { };
+  size_t operator()(message& msg) const {
+    if (fun_) {
+      auto res = fun_(msg);
+      if (res)
+        return *res;
+    }
+    return size_;
   }
+  size_t size_;
   std::function<optional<size_t> (message&)> fun_;
 };
 
 /// Argument placed in private memory. Requires a default value but can
 /// alternatively be calculated depending on the input through a function
 /// passed to the constructor.
-template <class Arg>
+template <class Arg, class Tag = hidden>
 struct priv {
+  static_assert(std::is_same<Tag,val>::value || std::is_same<Tag,hidden>::value,
+               "Argument of type `priv` must be returned as value or hidden.");
+  using tag_type = Tag;
+  using arg_type = typename std::decay<Arg>::type;
   priv() = default;
   template <class F>
-  priv(Arg val, F fun) {
+  priv(Arg val, F fun) : value_(val) {
+    static_assert(std::is_same<Tag,hidden>::value,
+               "Argument of type `priv` can only be initialized with a value"
+               "if it is manged by the actor, i.e., tagged as hidden.");
     fun_ = [fun](message& msg) -> optional<Arg> {
       auto res = msg.apply(fun);
       Arg result;
@@ -143,10 +181,11 @@ struct priv {
       }
       return none;
     };
-    value_ = val;
   }
-  priv(Arg val) {
-    value_ = val;
+  priv(Arg val) : value_(val) {
+    static_assert(std::is_same<Tag,hidden>::value,
+               "Argument of type `priv` can only be initialized with a value"
+               "if it is manged by the actor, i.e., tagged as hidden.");
   }
   Arg operator()(message& msg) const {
     if (fun_) {
@@ -202,6 +241,9 @@ struct is_input_arg<in<T>> : std::true_type {};
 
 template <class T>
 struct is_input_arg<in_out<T>> : std::true_type {};
+
+template <class T>
+struct is_input_arg<priv<T,val>> : std::true_type {};
 
 /// Filter type lists for output arguments
 template <class T>
@@ -287,6 +329,11 @@ struct extract_input_type<in_out<Arg, mref, TagOut>> {
   using type = opencl::mem_ref<Arg>;
 };
 
+template <class Arg>
+struct extract_input_type<priv<Arg,val>> {
+  using type = Arg;
+};
+
 /// extract type sent in an outgoing message
 template <class T>
 struct extract_output_type { };
@@ -311,6 +358,8 @@ struct extract_output_type<in_out<Arg, TagIn, mref>> {
   using type = opencl::mem_ref<Arg>;
 };
 
+// TODO: Should priv arguments be returned as well if they are not hidden?
+
 /// extract input tag
 template <class T>
 struct extract_input_tag { };
@@ -323,6 +372,11 @@ struct extract_input_tag<in<Arg, Tag>> {
 template <class Arg, class TagIn, class TagOut>
 struct extract_input_tag<in_out<Arg, TagIn, TagOut>> {
   using tag = TagIn;
+};
+
+template <class Arg>
+struct extract_input_tag<priv<Arg,val>> {
+  using tag = val;
 };
 
 /// extract output tag
@@ -350,6 +404,106 @@ struct message_from_results {
   message operator()(std::tuple<Ts...>& values) {
     return apply_args(*this, detail::get_indices(values), values);
   }
+};
+
+/// Calculate output indices from the kernel message
+
+// index in output tuple
+template <int Counter, class Arg>
+struct out_index_of {
+  static constexpr int value = -1;
+  static constexpr int next = Counter;
+};
+
+template <int Counter, class Arg, class TagIn, class TagOut>
+struct out_index_of<Counter, in_out<Arg,TagIn,TagOut>> {
+  static constexpr int value = Counter;
+  static constexpr int next = Counter + 1;
+};
+
+template <int Counter, class Arg, class Tag>
+struct out_index_of<Counter, out<Arg,Tag>> {
+  static constexpr int value = Counter;
+  static constexpr int next = Counter + 1;
+};
+
+// index in input message
+template <int Counter, class Arg>
+struct in_index_of {
+  static constexpr int value = -1;
+  static constexpr int next = Counter;
+};
+
+template <int Counter, class Arg, class Tag>
+struct in_index_of<Counter, in<Arg,Tag>> {
+  static constexpr int value = Counter;
+  static constexpr int next = Counter + 1;
+};
+
+template <int Counter, class Arg, class TagIn, class TagOut>
+struct in_index_of<Counter, in_out<Arg,TagIn,TagOut>> {
+  static constexpr int value = Counter;
+  static constexpr int next = Counter + 1;
+};
+
+template <int Counter, class Arg>
+struct in_index_of<Counter, priv<Arg,val>> {
+  static constexpr int value = Counter;
+  static constexpr int next = Counter + 1;
+};
+
+
+template <int In, int Out, class T>
+struct cl_arg_info {
+  static constexpr int in_pos = In;
+  static constexpr int out_pos = Out;
+  using type = T;
+};
+
+template <class ListA, class ListB, int InCounter, int OutCounter>
+struct cl_arg_info_list_impl;
+
+template <class Arg, class... Remaining, int InCounter, int OutCounter>
+struct cl_arg_info_list_impl<detail::type_list<>,
+                             detail::type_list<Arg, Remaining...>,
+                             InCounter, OutCounter> {
+  using in_idx = in_index_of<InCounter, Arg>;
+  using out_idx = out_index_of<OutCounter, Arg>;
+  using type =
+    typename cl_arg_info_list_impl<
+      detail::type_list<cl_arg_info<in_idx::value, out_idx::value, Arg>>,
+      detail::type_list<Remaining...>,
+      in_idx::next, out_idx::next
+    >::type;
+};
+
+template <class... Args, class Arg, class... Remaining,
+          int InCounter, int OutCounter>
+struct cl_arg_info_list_impl<detail::type_list<Args...>,
+                             detail::type_list<Arg, Remaining...>,
+                             InCounter, OutCounter> {
+  using in_idx = in_index_of<InCounter, Arg>;
+  using out_idx = out_index_of<OutCounter, Arg>;
+  using type =
+    typename cl_arg_info_list_impl<
+      detail::type_list<Args..., cl_arg_info<in_idx::value, out_idx::value, Arg>>,
+      detail::type_list<Remaining...>,
+      in_idx::next, out_idx::next
+    >::type;
+};
+
+template <class... Args, int InCounter, int OutCounter>
+struct cl_arg_info_list_impl<detail::type_list<Args...>, detail::type_list<>,
+                             InCounter, OutCounter> {
+  using type = detail::type_list<Args...>;
+};
+
+template <class List>
+struct cl_arg_info_list {
+  using type = typename cl_arg_info_list_impl<
+    detail::type_list<>,
+    List, 0, 0
+  >::type;
 };
 
 /// Helpers for conversion in deprecated spawn functions
