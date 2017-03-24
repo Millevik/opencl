@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.8)
 project(caf_examples_opencl CXX)
 
-if(OpenCL_LIBRARIES)
+if(OpenCL_LIBRARIES AND NOT CAF_NO_EXAMPLES)
   add_custom_target(opencl_examples)
   include_directories(${LIBCAF_INCLUDE_DIRS})
   if(${CMAKE_SYSTEM_NAME} MATCHES "Window")
