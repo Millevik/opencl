@@ -207,8 +207,7 @@ public:
       std::move(output_tuple),
       config_
     );
-    // cmd->enqueue();
-    std::cout << "Enqueue not implemented" << std::endl;
+    cmd->enqueue();
   }
 
   void enqueue(mailbox_element_ptr ptr, execution_unit* eu) override {

@@ -104,7 +104,8 @@ public:
       this->deref();
       return;
     }
-    enqueue_read_buffers(event_k, detail::get_indices(results_));
+    size_t pos = 0;
+    enqueue_read_buffers(event_k, pos, detail::get_indices(results_));
     cl_event marker;
 #if defined(__APPLE__)
     err = clEnqueueMarkerWithWaitList(
@@ -145,19 +146,6 @@ public:
   }
 
 private:
-  void enqueue_read_buffers(cl_event&, size_t&, detail::int_list<>) {
-    // end of recursion
-  }
-
-  template <long I, long... Is>
-  void enqueue_read_buffers(cl_event& kernel_done, size_t& pos,
-                            detail::int_list<I, Is...>) {
-    enqueue_read(std::get<I>(results_), kernel_done, pos);
-    enqueue_read_buffers(kernel_done, detail::int_list<Is...>{});
-  }
-  
-  // dispatch whether the result is a value or mem_ref
-  
   template <long I, class T>
   void enqueue_read(std::vector<T>& buf, cl_event& kernel_done, size_t& pos) {
     auto af = static_cast<Facade*>(actor_cast<abstract_actor*>(opencl_actor_));
@@ -180,6 +168,17 @@ private:
   void enqueue_read(mem_ref<T>&, cl_event&, size_t&) {
     // nop
   };
+  
+  void enqueue_read_buffers(cl_event&, size_t&, detail::int_list<>) {
+    // end of recursion
+  }
+
+  template <long I, long... Is>
+  void enqueue_read_buffers(cl_event& kernel_done, size_t& pos,
+                            detail::int_list<I, Is...>) {
+    enqueue_read<I>(std::get<I>(results_), kernel_done, pos);
+    enqueue_read_buffers(kernel_done, pos, detail::int_list<Is...>{});
+  }
 
   void handle_results() {
     auto actor_facade =
