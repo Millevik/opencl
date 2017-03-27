@@ -187,6 +187,17 @@ public:
     args_vec scratch_buffers;
     size_vec result_sizes;
     outp_tup output_tuple;
+//    std::cout << "arg_types = echo " << std::string(typeid(arg_types).name()) << " | c++filt -n" << std::endl;
+//    std::cout << "unpacked_types = echo " << std::string(typeid(unpacked_types).name()) << " | c++filt -n" << std::endl;
+//    std::cout << "input_wrapped_types = echo " << std::string(typeid(input_wrapped_types).name()) << " | c++filt -n" << std::endl;
+//    std::cout << "input_types = echo " << std::string(typeid(input_types).name()) << " | c++filt -n" << std::endl;
+//    std::cout << "input_mapping = echo " << std::string(typeid(input_mapping).name()) << " | c++filt -n" << std::endl;
+//    std::cout << "output_wrapped_types = echo " << std::string(typeid(output_wrapped_types).name()) << " | c++filt -n" << std::endl;
+//    std::cout << "output_types = echo " << std::string(typeid(output_types).name()) << " | c++filt -n" << std::endl;
+//    std::cout << "output_mapping = echo " << std::string(typeid(output_mapping).name()) << " | c++filt -n" << std::endl;
+//    std::cout << "processing_list = echo " << std::string(typeid(processing_list).name()) << " | c++filt -n" << std::endl;
+//    std::cout << "command_type = echo " << std::string(typeid(command_type).name()) << " | c++filt -n" << std::endl;
+//    std::cout << "outp_tup = echo " << std::string(typeid(outp_tup).name()) << " | c++filt -n" << std::endl;
     add_kernel_arguments(events,          // accumulate events for execution
                          input_buffers,   // opencl buffers included in in msg
                          output_buffers,  // opencl buffers included in out msg
@@ -293,10 +304,10 @@ public:
     using value_type = typename detail::tl_at<unpacked_types, I>::type;
     using container_type = mem_ref<value_type>;
     auto mem = msg.get_as<container_type>(InPos);
+    CAF_ASSERT(mem.location() == placement::global_mem);
     auto event = mem.take_event();
     if (event != nullptr)
       events.push_back(event);
-    CAF_ASSERT(mem.location() == placement::global_mem);
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              sizeof(cl_mem), static_cast<void*>(&mem.get()));
   }
@@ -342,13 +353,14 @@ public:
                                  queue_.get(), buffer, cl_bool{CL_FALSE},
                                  cl_uint{0}, buffer_size, value.data());
     events.push_back(std::move(event));
-    mem_ptr mem;
-    mem.reset(buffer, false);
+    auto mem = mem_ref<value_type>{
+      size, placement::global_mem, queue_, mem_ptr{buffer, false},
+      CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY,
+      nullptr, false, none
+    };
+    std::get<OutPos>(output_tuple) = mem;
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
-             sizeof(cl_mem), static_cast<void*>(mem.get()));
-    std::get<OutPos>(output_tuple) = mem_ref<T>{size, placement::global_mem,
-                                                queue_, mem, CL_MEM_READ_WRITE,
-                                                nullptr, false, none};
+             sizeof(cl_mem), static_cast<void*>(&mem.get()));
   }
 
   template <long I, int InPos, int OutPos, class T>
@@ -379,9 +391,9 @@ public:
     if (event != nullptr)
       events.push_back(event);
     CAF_ASSERT(mem.location() == placement::global_mem);
+    std::get<OutPos>(output_tuple) = mem;
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
                      sizeof(cl_mem), static_cast<void*>(&mem.get()));
-    std::get<OutPos>(output_tuple) = mem;
   }
 
   // Two functions to handle `out` arguments: val and mref
@@ -414,15 +426,14 @@ public:
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
                         CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY,
                         buffer_size, nullptr);
-    mem_ptr mem;
-    mem.reset(buffer, false);
-    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
-             sizeof(cl_mem), static_cast<void*>(mem.get()));
-    std::get<OutPos>(output_tuple) = mem_ref<T>{
-      size, placement::global_mem, queue_, mem,
+    auto mem = mem_ref<value_type>{
+      size, placement::global_mem, queue_, mem_ptr{buffer, false},
       CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY,
       nullptr, false, none
     };
+    std::get<OutPos>(output_tuple) = mem;
+    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
+             sizeof(cl_mem), static_cast<void*>(&mem.get()));
   }
 
   // One function to handle `scratch` buffers

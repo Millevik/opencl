@@ -84,4 +84,4 @@ struct cl_spawn_helper_new {
 } // namespace opencl
 } // namespace caf
 
- #endif // CAF_OPENCL_DETAIL_SPAWN_HELPER_HPP
+#endif // CAF_OPENCL_DETAIL_SPAWN_HELPER_HPP

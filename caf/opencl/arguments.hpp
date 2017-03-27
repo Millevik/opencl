@@ -214,14 +214,14 @@ struct carr_to_vec<T*> {
 template <class T>
 struct is_opencl_arg : std::false_type {};
 
-template <class T>
-struct is_opencl_arg<in<T>> : std::true_type {};
+template <class T, class Tag>
+struct is_opencl_arg<in<T, Tag>> : std::true_type {};
 
-template <class T>
-struct is_opencl_arg<in_out<T>> : std::true_type {};
+template <class T, class TagIn, class TagOut>
+struct is_opencl_arg<in_out<T, TagIn, TagOut>> : std::true_type {};
 
-template <class T>
-struct is_opencl_arg<out<T>> : std::true_type {};
+template <class T, class Tag>
+struct is_opencl_arg<out<T, Tag>> : std::true_type {};
 
 template <class T>
 struct is_opencl_arg<scratch<T>> : std::true_type {};
@@ -229,18 +229,18 @@ struct is_opencl_arg<scratch<T>> : std::true_type {};
 template <class T>
 struct is_opencl_arg<local<T>> : std::true_type {};
 
-template <class T>
-struct is_opencl_arg<priv<T>> : std::true_type {};
+template <class T, class Tag>
+struct is_opencl_arg<priv<T, Tag>> : std::true_type {};
 
 /// Filter type lists for input arguments
 template <class T>
 struct is_input_arg : std::false_type {};
 
-template <class T>
-struct is_input_arg<in<T>> : std::true_type {};
+template <class T, class Tag>
+struct is_input_arg<in<T, Tag>> : std::true_type {};
 
-template <class T>
-struct is_input_arg<in_out<T>> : std::true_type {};
+template <class T, class TagIn, class TagOut>
+struct is_input_arg<in_out<T, TagIn, TagOut>> : std::true_type {};
 
 template <class T>
 struct is_input_arg<priv<T,val>> : std::true_type {};
@@ -249,18 +249,18 @@ struct is_input_arg<priv<T,val>> : std::true_type {};
 template <class T>
 struct is_output_arg : std::false_type {};
 
-template <class T>
-struct is_output_arg<out<T>> : std::true_type {};
+template <class T, class Tag>
+struct is_output_arg<out<T, Tag>> : std::true_type {};
 
-template <class T>
-struct is_output_arg<in_out<T>> : std::true_type {};
+template <class T, class TagIn, class TagOut>
+struct is_output_arg<in_out<T, TagIn, TagOut>> : std::true_type {};
 
 /// Filter for arguments that require size
 template <class T>
 struct requires_size_arg : std::false_type {};
 
-template <class T>
-struct requires_size_arg<out<T>> : std::true_type {};
+template <class T, class Tag>
+struct requires_size_arg<out<T, Tag>> : std::true_type {};
 
 template <class T>
 struct requires_size_arg<scratch<T>> : std::true_type {};
@@ -268,25 +268,25 @@ struct requires_size_arg<scratch<T>> : std::true_type {};
 template <class T>
 struct requires_size_arg<local<T>> : std::true_type {};
 
-template <class T>
-struct requires_size_arg<priv<T>> : std::true_type {};
+template <class T, class Tag>
+struct requires_size_arg<priv<T, Tag>> : std::true_type {};
 
 /// extract types
 template <class T>
 struct extract_type { };
 
-template <class T>
-struct extract_type<in<T>> {
+template <class T, class Tag>
+struct extract_type<in<T, Tag>> {
   using type = typename std::decay<typename carr_to_vec<T>::type>::type;
 };
 
-template <class T>
-struct extract_type<in_out<T>> {
+template <class T, class TagIn, class TagOut>
+struct extract_type<in_out<T, TagIn, TagOut>> {
   using type = typename std::decay<typename carr_to_vec<T>::type>::type;
 };
 
-template <class T>
-struct extract_type<out<T>> {
+template <class T, class Tag>
+struct extract_type<out<T, Tag>> {
   using type = typename std::decay<typename carr_to_vec<T>::type>::type;
 };
 
@@ -300,8 +300,8 @@ struct extract_type<local<T>> {
   using type = typename std::decay<typename carr_to_vec<T>::type>::type;
 };
 
-template <class T>
-struct extract_type<priv<T>> {
+template <class T, class Tag>
+struct extract_type<priv<T, Tag>> {
   using type = typename std::decay<typename carr_to_vec<T>::type>::type;
 };
 
