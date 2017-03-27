@@ -711,8 +711,8 @@ CAF_TEST(opencl_argument_info) {
   CAF_CHECK_EQUAL(true, true);
 }
 
-void test_global_val_val(actor_system& sys) {
-  CAF_MESSAGE("Testing global val  -> val ");
+void test_in_val_out_val(actor_system& sys) {
+  CAF_MESSAGE("Testing in: val  -> out: val ");
   auto& mngr = sys.opencl_manager();
   auto opt = mngr.get_device(0);
   CAF_REQUIRE(opt);
@@ -808,8 +808,8 @@ void test_global_val_val(actor_system& sys) {
   }, others >> wrong_msg);
 }
 
-void test_gloabl_val_mref(actor_system& sys) {
-  CAF_MESSAGE("Testing global val  -> mref");
+void test_in_val_out_mref(actor_system& sys) {
+  CAF_MESSAGE("Testing in: val  -> out: mref");
   // setup
   auto& mngr = sys.opencl_manager();
   auto opt = mngr.get_device(0);
@@ -865,8 +865,8 @@ void test_gloabl_val_mref(actor_system& sys) {
   }, others >> wrong_msg);
 }
 
-void test_gloabl_mref_val(actor_system& sys) {
-  CAF_MESSAGE("Testing global mref -> val ");
+void test_in_mref_out_val(actor_system& sys) {
+  CAF_MESSAGE("Testing in: mref -> out: val ");
   // setup
   auto& mngr = sys.opencl_manager();
   auto opt = mngr.get_device(0);
@@ -923,8 +923,8 @@ void test_gloabl_mref_val(actor_system& sys) {
   }, others >> wrong_msg);
 }
 
-void test_gloabl_mref_mref(actor_system& sys) {
-  CAF_MESSAGE("Testing global mref -> mref");
+void test_in_mref_out_mref(actor_system& sys) {
+  CAF_MESSAGE("Testing in: mref -> out: mref");
   // setup
   auto& mngr = sys.opencl_manager();
   auto opt = mngr.get_device(0);
@@ -983,7 +983,7 @@ void test_gloabl_mref_mref(actor_system& sys) {
 }
 
 void test_varying_arguments(actor_system& sys) {
-  CAF_MESSAGE("Testing varying arguments");
+  CAF_MESSAGE("Testing varying argument order");
   // setup
   auto& mngr = sys.opencl_manager();
   auto opt = mngr.get_device(0);
@@ -997,9 +997,142 @@ void test_varying_arguments(actor_system& sys) {
   };
   // tests
   spawn_config conf{dims{problem_size}};
+  auto input1 = make_iota_vector<int>(problem_size);
+  auto input2 = dev.global_argument(input1);
   auto w1 = mngr.spawn_new(prog, kn_varying, conf,
                            in<int>{}, out<int>{}, in<int>{}, out<int>{});
+  self->send(w1, input1, input1);
+  self->receive([&](const ivec& res1, const ivec& res2) {
+    check_vector_results("Varying args, output 1", input1, res1);
+    check_vector_results("Varying args, output 2", input1, res2);
+  }, others >> wrong_msg);
+  auto w2 = mngr.spawn_new(prog, kn_varying, conf,
+                           in<int,mref>{}, out<int>{},
+                           in<int>{}, out<int,mref>{});
+  self->send(w2, input2, input1);
+  self->receive([&](const ivec& res1, iref& res2) {
+    check_vector_results("Varying args, output 1", input1, res1);
+    check_mref_results("Varying args, output 2", input1, res2);
+  }, others >> wrong_msg);
+}
 
+void test_inout(actor_system& sys) {
+  CAF_MESSAGE("Testing in_out arguments");
+  // setup
+  auto& mngr = sys.opencl_manager();
+  auto opt = mngr.get_device(0);
+  CAF_REQUIRE(opt);
+  auto dev = *opt;
+  auto prog = mngr.create_program(kernel_source, "", dev);
+  scoped_actor self{sys};
+  auto wrong_msg = [&](message_view& x) -> result<message> {
+    CAF_ERROR("unexpected message" << x.content().stringify());
+    return sec::unexpected_message;
+  };
+  // tests
+  ivec input = make_iota_vector<int>(problem_size);
+  auto input2 = dev.global_argument(input);
+  auto input3 = dev.global_argument(input);
+  ivec res{input};
+  for_each(begin(res), end(res), [](int& val){ val *= 2; });
+  auto conf = spawn_config{dims{problem_size}};
+  auto w1 = mngr.spawn_new(kernel_source, kn_inout, conf,
+                           in_out<int,val,val>{});
+  self->send(w1, input);
+  self->receive([&](const ivec& result) {
+    check_vector_results("Testing in_out (val -> val)", res, result);
+  }, others >> wrong_msg);
+  auto w2 = mngr.spawn_new(kernel_source, kn_inout, conf,
+                           in_out<int,val,mref>{});
+  self->send(w2, input);
+  self->receive([&](iref& result) {
+    check_mref_results("Testing in_out (val -> mref)", res, result);
+  }, others >> wrong_msg);
+  auto w3 = mngr.spawn_new(kernel_source, kn_inout, conf,
+                           in_out<int,mref,val>{});
+  self->send(w3, input2);
+  self->receive([&](const ivec& result) {
+    check_vector_results("Testing in_out (mref -> val)", res, result);
+  }, others >> wrong_msg);
+  auto w4 = mngr.spawn_new(kernel_source, kn_inout, conf,
+                           in_out<int,mref,mref>{});
+  self->send(w4, input3);
+  self->receive([&](iref& result) {
+    check_mref_results("Testing in_out (mref -> mref)", res, result);
+  }, others >> wrong_msg);
+}
+
+void test_priv(actor_system& sys) {
+  CAF_MESSAGE("Testing priv argument");
+  // setup
+  auto& mngr = sys.opencl_manager();
+  auto opt = mngr.get_device(0);
+  CAF_REQUIRE(opt);
+  auto dev = *opt;
+  auto prog = mngr.create_program(kernel_source, "", dev);
+  scoped_actor self{sys};
+  auto wrong_msg = [&](message_view& x) -> result<message> {
+    CAF_ERROR("unexpected message" << x.content().stringify());
+    return sec::unexpected_message;
+  };
+  // tests
+  spawn_config conf{dims{problem_size}};
+  ivec input = make_iota_vector<int>(problem_size);
+  int value = 42;
+  ivec res{input};
+  for_each(begin(res), end(res), [&](int& val){ val += value; });
+  auto w1 = mngr.spawn_new(kernel_source, kn_private, conf,
+                           in_out<int>{}, priv<int>{value});
+  self->send(w1, input);
+  self->receive([&](const ivec& result) {
+    check_vector_results("Testing hidden private arugment", res, result);
+  }, others >> wrong_msg);
+  auto w2 = mngr.spawn_new(kernel_source, kn_private, conf,
+                           in_out<int>{}, priv<int,val>{});
+  self->send(w2, input, value);
+  self->receive([&](const ivec& result) {
+    check_vector_results("Testing val private arugment", res, result);
+  }, others >> wrong_msg);
+}
+
+void test_local(actor_system& sys) {
+  CAF_MESSAGE("Testing local argument");
+  // setup
+  auto& mngr = sys.opencl_manager();
+  auto opt = mngr.get_device(0);
+  CAF_REQUIRE(opt);
+  auto dev = *opt;
+  auto prog = mngr.create_program(kernel_source, "", dev);
+  scoped_actor self{sys};
+  auto wrong_msg = [&](message_view& x) -> result<message> {
+    CAF_ERROR("unexpected message" << x.content().stringify());
+    return sec::unexpected_message;
+  };
+  // tests
+  size_t global_size = 256;
+  size_t local_size = global_size / 2;
+  ivec res = make_iota_vector<int>(global_size);
+  auto last = 0;
+  for (size_t i = 0; i < global_size; ++i) {
+    if (i == local_size) last = 0;
+    auto tmp = res[i];
+    res[i] = last;
+    last += tmp;
+  }
+  auto conf = spawn_config{dims{global_size}, {}, dims{local_size}};
+  auto w = mngr.spawn_new(kernel_source, kn_local, conf,
+                          in_out<int>{}, local<int>{local_size});
+  self->send(w, make_iota_vector<int>(global_size));
+  self->receive([&](const ivec& result) {
+    check_vector_results("Testing local arugment", res, result);
+  }, others >> wrong_msg);
+  // Same test, different argument order
+  w = mngr.spawn_new(kernel_source, kn_order, conf,
+                     local<int>{local_size}, in_out<int>{});
+  self->send(w, make_iota_vector<int>(global_size));
+  self->receive([&](const ivec& result) {
+    check_vector_results("Testing local arugment", res, result);
+  }, others >> wrong_msg);
 }
 
 CAF_TEST(opencl_opencl_actor) {
@@ -1008,13 +1141,14 @@ CAF_TEST(opencl_opencl_actor) {
     .add_message_type<ivec>("int_vector")
     .add_message_type<matrix_type>("square_matrix");
   actor_system system{cfg};
-  test_global_val_val(system);
-  test_gloabl_val_mref(system);
-  test_gloabl_mref_val(system);
-  test_gloabl_mref_mref(system);
+  test_in_val_out_val(system);
+  test_in_val_out_mref(system);
+  test_in_mref_out_val(system);
+  test_in_mref_out_mref(system);
   test_varying_arguments(system);
-//  test_priv(system);
-//  test_local(system); // do I need this?
+  test_inout(system);
+  test_priv(system);
+  test_local(system);
   system.await_all_actors_done();
 }
 

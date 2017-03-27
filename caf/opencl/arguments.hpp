@@ -268,8 +268,8 @@ struct requires_size_arg<scratch<T>> : std::true_type {};
 template <class T>
 struct requires_size_arg<local<T>> : std::true_type {};
 
-template <class T, class Tag>
-struct requires_size_arg<priv<T, Tag>> : std::true_type {};
+//template <class T, class Tag>
+//struct requires_size_arg<priv<T, Tag>> : std::true_type {};
 
 /// extract types
 template <class T>
