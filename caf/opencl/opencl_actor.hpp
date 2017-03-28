@@ -170,23 +170,12 @@ public:
                message content, execution_unit*) override {
     CAF_PUSH_AID(id());
     CAF_LOG_TRACE("");
-    /*
-    std::cout << "arg_types = echo " << std::string(typeid(arg_types).name()) << " | c++filt -n" << std::endl;
-    std::cout << "unpacked_types = echo " << std::string(typeid(unpacked_types).name()) << " | c++filt -n" << std::endl;
-    std::cout << "input_wrapped_types = echo " << std::string(typeid(input_wrapped_types).name()) << " | c++filt -n" << std::endl;
-    std::cout << "input_types = echo " << std::string(typeid(input_types).name()) << " | c++filt -n" << std::endl;
-    std::cout << "input_mapping = echo " << std::string(typeid(input_mapping).name()) << " | c++filt -n" << std::endl;
-    std::cout << "output_wrapped_types = echo " << std::string(typeid(output_wrapped_types).name()) << " | c++filt -n" << std::endl;
-    std::cout << "output_types = echo " << std::string(typeid(output_types).name()) << " | c++filt -n" << std::endl;
-    std::cout << "output_mapping = echo " << std::string(typeid(output_mapping).name()) << " | c++filt -n" << std::endl;
-    std::cout << "processing_list = echo " << std::string(typeid(processing_list).name()) << " | c++filt -n" << std::endl;
-    std::cout << "command_type = echo " << std::string(typeid(command_type).name()) << " | c++filt -n" << std::endl;
-    std::cout << "outp_tup = echo " << std::string(typeid(outp_tup).name()) << " | c++filt -n" << std::endl;
-    */
     if (map_args_) {
       auto mapped = map_args_(content);
-      if (!mapped)
+      if (!mapped) {
+        CAF_LOG_ERROR("Mapping argumentes failed.");
         return;
+      }
       content = std::move(*mapped);
     }
     if (!content.match_elements(input_types{})) {
@@ -290,8 +279,8 @@ public:
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
                         CL_MEM_READ_WRITE, buffer_size, nullptr);
     auto event = v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
-                                 queue_.get(), buffer, cl_bool{CL_FALSE},
-                                 cl_uint{0}, buffer_size, value.data());
+                                 queue_.get(), buffer, CL_FALSE,
+                                 0u, buffer_size, value.data());
     events.push_back(std::move(event));
     mem_ptr tmp;
     tmp.reset(buffer, false);
@@ -326,15 +315,15 @@ public:
     auto& container = msg.get_as<container_type>(InPos);
     auto size = container.size();
     size_t buffer_size = sizeof(value_type) * size;
+    mem_ptr mem;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
                         CL_MEM_READ_WRITE, buffer_size, nullptr);
+    mem.reset(buffer, false);
     auto event = v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
-                                 queue_.get(), buffer, cl_bool{CL_FALSE},
-                                 cl_uint{0}, buffer_size, container.data());
-    events.push_back(std::move(event));
-    mem_ptr tmp;
-    tmp.reset(buffer, false);
-    output_buffers.push_back(tmp);
+                                 queue_.get(), mem.get(), CL_FALSE,
+                                 0u, buffer_size, container.data());
+    events.push_back(event);
+    output_buffers.push_back(mem);
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              sizeof(cl_mem), static_cast<const void*>(&output_buffers.back()));
     sizes.push_back(size);
@@ -352,8 +341,8 @@ public:
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
                         CL_MEM_READ_WRITE, buffer_size, nullptr);
     auto event = v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
-                                 queue_.get(), buffer, cl_bool{CL_FALSE},
-                                 cl_uint{0}, buffer_size, container.data());
+                                 queue_.get(), buffer, CL_FALSE,
+                                 0u, buffer_size, container.data());
     events.push_back(std::move(event));
     auto mem = mem_ref<value_type>{
       size, placement::global_mem, queue_, mem_ptr{buffer, false},

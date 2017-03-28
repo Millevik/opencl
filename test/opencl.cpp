@@ -282,6 +282,18 @@ void check_vector_results(const string& description,
       cout << " " << result[i];
     }
     cout << endl;
+    cout << "Size: " << expected.size() << " vs. " << result.size() << endl;
+    cout << "Differ at: " << endl;
+    bool same = true;
+    for (size_t i = 0; i < min(expected.size(), result.size()); ++i) {
+      if (expected[i] != result[i]) {
+        cout << "[" << i << "] " << expected[i] << " != " << result[i] << endl;
+        same = false;
+      }
+    }
+    if (same) {
+      cout << "... nowhere." << endl;
+    }
   }
 }
 
@@ -996,23 +1008,24 @@ void test_varying_arguments(actor_system& sys) {
     return sec::unexpected_message;
   };
   // tests
-  spawn_config conf{dims{problem_size}};
-  auto input1 = make_iota_vector<int>(problem_size);
+  size_t size = 23;
+  spawn_config conf{dims{size}};
+  auto input1 = make_iota_vector<int>(size);
   auto input2 = dev.global_argument(input1);
   auto w1 = mngr.spawn_new(prog, kn_varying, conf,
                            in<int>{}, out<int>{}, in<int>{}, out<int>{});
-  self->send(w1, input1, input1);
+  self->send(w1, make_iota_vector<int>(size), make_iota_vector<int>(size));
   self->receive([&](const ivec& res1, const ivec& res2) {
-    check_vector_results("Varying args, output 1", input1, res1);
-    check_vector_results("Varying args, output 2", input1, res2);
+    check_vector_results("Varying args (vec only), output 1", input1, res1);
+    check_vector_results("Varying args (vec only), output 2", input1, res2);
   }, others >> wrong_msg);
   auto w2 = mngr.spawn_new(prog, kn_varying, conf,
                            in<int,mref>{}, out<int>{},
                            in<int>{}, out<int,mref>{});
   self->send(w2, input2, input1);
   self->receive([&](const ivec& res1, iref& res2) {
-    check_vector_results("Varying args, output 1", input1, res1);
-    check_mref_results("Varying args, output 2", input1, res2);
+    check_vector_results("Varying args (vec), output 1", input1, res1);
+    check_mref_results("Varying args (ref), output 2", input1, res2);
   }, others >> wrong_msg);
 }
 

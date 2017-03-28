@@ -271,6 +271,19 @@ struct requires_size_arg<local<T>> : std::true_type {};
 //template <class T, class Tag>
 //struct requires_size_arg<priv<T, Tag>> : std::true_type {};
 
+/// Filter mem_refs
+template <class T>
+struct is_ref_type : std::false_type {};
+
+template <class T>
+struct is_ref_type<mem_ref<T>> : std::true_type {};
+
+template <class T>
+struct is_val_type : std::true_type {};
+
+template <class T>
+struct is_val_type<mem_ref<T>> : std::false_type {};
+
 /// extract types
 template <class T>
 struct extract_type { };
