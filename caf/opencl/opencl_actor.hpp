@@ -116,25 +116,25 @@ public:
   typename detail::il_indices<arg_types>::type indices;
 
   using evnt_vec = std::vector<cl_event>;
-  using args_vec = std::vector<mem_ptr>;
-  using size_vec = std::vector<size_t>;
-  using outp_tup = typename tuple_type_of<output_types>::type;
+  using mem_vec = std::vector<mem_ptr>;
+  using len_vec = std::vector<size_t>;
+  using out_tup = typename tuple_type_of<output_types>::type;
 
   const char* name() const override {
     return "OpenCL actor";
   }
 
-  static actor create(actor_config actor_cfg, const program& prog,
-                      const char* kernel_name, const spawn_config& spawn_cfg,
+  static actor create(actor_config actor_conf, const program& prog,
+                      const char* kernel_name, const spawn_config& spawn_conf,
                       input_mapping map_args, output_mapping map_result,
                       Ts&&... xs) {
-    if (spawn_cfg.dimensions().empty()) {
+    if (spawn_conf.dimensions().empty()) {
       auto str = "OpenCL kernel needs at least 1 global dimension.";
       CAF_LOG_ERROR(str);
       throw std::runtime_error(str);
     }
     auto check_vec = [&](const dim_vec& vec, const char* name) {
-      if (! vec.empty() && vec.size() != spawn_cfg.dimensions().size()) {
+      if (! vec.empty() && vec.size() != spawn_conf.dimensions().size()) {
         std::ostringstream oss;
         oss << name << " vector is not empty, but "
             << "its size differs from global dimensions vector's size";
@@ -142,9 +142,9 @@ public:
         throw std::runtime_error(oss.str());
       }
     };
-    check_vec(spawn_cfg.offsets(), "offsets");
-    check_vec(spawn_cfg.local_dimensions(), "local dimensions");
-    auto& sys = actor_cfg.host->system();
+    check_vec(spawn_conf.offsets(), "offsets");
+    check_vec(spawn_conf.local_dimensions(), "local dimensions");
+    auto& sys = actor_conf.host->system();
     auto itr = prog.available_kernels_.find(kernel_name);
     if (itr == prog.available_kernels_.end()) {
       kernel_ptr kernel;
@@ -152,15 +152,15 @@ public:
                                  kernel_name),
                    false);
       return make_actor<opencl_actor, actor>(sys.next_actor_id(), sys.node(),
-                                             &sys, std::move(actor_cfg),
-                                             prog, kernel, spawn_cfg,
+                                             &sys, std::move(actor_conf),
+                                             prog, kernel, spawn_conf,
                                              std::move(map_args),
                                              std::move(map_result),
                                              std::forward_as_tuple(xs...));
     }
     return make_actor<opencl_actor, actor>(sys.next_actor_id(), sys.node(),
-                                           &sys, std::move(actor_cfg),
-                                           prog, itr->second, spawn_cfg,
+                                           &sys, std::move(actor_conf),
+                                           prog, itr->second, spawn_conf,
                                            std::move(map_args),
                                            std::move(map_result),
                                            std::forward_as_tuple(xs...));
@@ -184,17 +184,17 @@ public:
     }
     auto hdl = std::make_tuple(sender, mid.response_id());
     evnt_vec events;
-    args_vec input_buffers;
-    args_vec output_buffers;
-    args_vec scratch_buffers;
-    size_vec result_sizes;
-    outp_tup output_tuple;
+    mem_vec input_buffers;
+    mem_vec output_buffers;
+    mem_vec scratch_buffers;
+    len_vec result_lengths;
+    out_tup result;
     add_kernel_arguments(events,          // accumulate events for execution
                          input_buffers,   // opencl buffers included in in msg
                          output_buffers,  // opencl buffers included in out msg
                          scratch_buffers, // opencl only used here
-                         output_tuple,    // tuple to save the output values
-                         result_sizes,    // size of buffers to read back
+                         result,          // tuple to save the output values
+                         result_lengths,  // size of buffers to read back
                          content,         // message content
                          indices);        // enable extraction of types from msg
     auto cmd = make_counted<command_type>(
@@ -204,9 +204,9 @@ public:
       std::move(input_buffers),
       std::move(output_buffers),
       std::move(scratch_buffers),
-      std::move(result_sizes),
+      std::move(result_lengths),
       std::move(content),
-      std::move(output_tuple),
+      std::move(result),
       config_
     );
     cmd->enqueue();
@@ -218,29 +218,29 @@ public:
     enqueue(ptr->sender, ptr->mid, ptr->move_content_to_message(), eu);
   }
 
-  opencl_actor(actor_config actor_cfg,
+  opencl_actor(actor_config actor_conf,
                const program& prog, kernel_ptr kernel,
-               spawn_config spawn_cfg,
+               spawn_config spawn_conf,
                input_mapping map_args, output_mapping map_result,
                std::tuple<Ts...> xs)
-      : monitorable_actor(actor_cfg),
+      : monitorable_actor(actor_conf),
         kernel_(std::move(kernel)),
         program_(prog.program_),
         context_(prog.context_),
         queue_(prog.queue_),
-        config_(std::move(spawn_cfg)),
+        config_(std::move(spawn_conf)),
         map_args_(std::move(map_args)),
         map_results_(std::move(map_result)),
         kernel_signature_(std::move(xs)) {
     CAF_LOG_TRACE(CAF_ARG(this->id()));
-    default_buffer_size_ = std::accumulate(config_.dimensions().begin(),
-                                           config_.dimensions().end(),
-                                           size_t{1},
-                                           std::multiplies<size_t>{});
+    default_length_ = std::accumulate(config_.dimensions().begin(),
+                                      config_.dimensions().end(),
+                                      size_t{1},
+                                      std::multiplies<size_t>{});
   }
 
-  void add_kernel_arguments(evnt_vec&, args_vec&, args_vec&, args_vec&,
-                            outp_tup&, size_vec&, message&,
+  void add_kernel_arguments(evnt_vec&, mem_vec&, mem_vec&, mem_vec&,
+                            out_tup&, len_vec&, message&,
                             detail::int_list<>) {
     // nop
   }
@@ -249,58 +249,55 @@ public:
   /// access the related memory handles later on. The scratch and input handles
   /// are saved to prevent deletion before the kernel finished execution.
   template <long I, long... Is>
-  void add_kernel_arguments(evnt_vec& events, args_vec& input_buffers,
-                            args_vec& output_buffers, args_vec& scratch_buffers,
-                            outp_tup& output_tuple, size_vec& sizes,
+  void add_kernel_arguments(evnt_vec& events, mem_vec& inputs, mem_vec& outputs,
+                            mem_vec& scratch, out_tup& result, len_vec& lengths,
                             message& msg, detail::int_list<I, Is...>) {
     using arg_type = typename caf::detail::tl_at<processing_list,I>::type;
     // TODO: In case of mem_refs, should we check if device used for execution
     //       is the same and should we try to transfer memory in such cases?
     create_buffer<I, arg_type::in_pos, arg_type::out_pos>(
-      std::get<I>(kernel_signature_), events, sizes, input_buffers,
-      output_buffers, scratch_buffers, output_tuple, msg
+      std::get<I>(kernel_signature_), events, lengths, inputs,
+      outputs, scratch, result, msg
     );
-    add_kernel_arguments(events, input_buffers, output_buffers,
-                         scratch_buffers, output_tuple, sizes,
+    add_kernel_arguments(events, inputs, outputs,
+                         scratch, result, lengths,
                          msg, detail::int_list<Is...>{});
   }
 
   // Two functions to handle `in` arguments: val and mref
 
   template <long I, int InPos, int OutPos, class T>
-  void create_buffer(const in<T, val>&, evnt_vec& events, size_vec&,
-                     args_vec& input_buffers, args_vec&, args_vec&,
-                     outp_tup&, message& msg) {
+  void create_buffer(const in<T, val>&, evnt_vec& events, len_vec&,
+                     mem_vec& inputs, mem_vec&, mem_vec&, out_tup&,
+                     message& msg) {
     using value_type = typename detail::tl_at<unpacked_types, I>::type;
     using container_type = std::vector<value_type>;
-    auto& value = msg.get_as<container_type>(InPos);
-    auto size = value.size();
-    size_t buffer_size = sizeof(value_type) * size;
+    auto& container = msg.get_as<container_type>(InPos);
+    auto len = container.size();
+    size_t num_bytes = sizeof(value_type) * len;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
-                        CL_MEM_READ_WRITE, buffer_size, nullptr);
+                        CL_MEM_READ_WRITE, num_bytes, nullptr);
     auto event = v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
                                  queue_.get(), buffer, CL_FALSE,
-                                 0u, buffer_size, value.data());
-    events.push_back(std::move(event));
-    mem_ptr tmp;
-    tmp.reset(buffer, false);
-    input_buffers.push_back(tmp);
+                                 0u, num_bytes, container.data());
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
-             sizeof(cl_mem), static_cast<const void*>(&input_buffers.back()));
+             sizeof(cl_mem), static_cast<const void*>(&buffer));
+    events.push_back(event);
+    inputs.emplace_back(buffer, false);
   }
 
   template <long I, int InPos, int OutPos, class T>
-  void create_buffer(const in<T, mref>&, evnt_vec& events, size_vec&,
-                     args_vec&, args_vec&, args_vec&, outp_tup&, message& msg) {
+  void create_buffer(const in<T, mref>&, evnt_vec& events, len_vec&, mem_vec&,
+                     mem_vec&, mem_vec&, out_tup&, message& msg) {
     using value_type = typename detail::tl_at<unpacked_types, I>::type;
     using container_type = mem_ref<value_type>;
-    auto mem = msg.get_as<container_type>(InPos);
-    CAF_ASSERT(mem.location() == placement::global_mem);
-    auto event = mem.take_event();
+    auto container = msg.get_as<container_type>(InPos);
+    CAF_ASSERT(container.location() == placement::global_mem);
+    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
+             sizeof(cl_mem), static_cast<const void*>(&container.get()));
+    auto event = container.take_event();
     if (event != nullptr)
       events.push_back(event);
-    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
-             sizeof(cl_mem), static_cast<const void*>(&mem.get()));
   }
 
   // Four functions to handle `in_out` arguments:
@@ -308,162 +305,153 @@ public:
 
   template <long I, int InPos, int OutPos, class T>
   void create_buffer(const in_out<T,val,val>&, evnt_vec& events,
-                     size_vec& sizes, args_vec&, args_vec& output_buffers,
-                     args_vec&, outp_tup&, message& msg) {
+                     len_vec& lengths, mem_vec&, mem_vec& outputs,
+                     mem_vec&, out_tup&, message& msg) {
     using value_type = typename detail::tl_at<unpacked_types, I>::type;
     using container_type = std::vector<value_type>;
     auto& container = msg.get_as<container_type>(InPos);
-    auto size = container.size();
-    size_t buffer_size = sizeof(value_type) * size;
-    mem_ptr mem;
+    auto len = container.size();
+    size_t num_bytes = sizeof(value_type) * len;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
-                        CL_MEM_READ_WRITE, buffer_size, nullptr);
-    mem.reset(buffer, false);
+                        CL_MEM_READ_WRITE, num_bytes, nullptr);
     auto event = v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
-                                 queue_.get(), mem.get(), CL_FALSE,
-                                 0u, buffer_size, container.data());
-    events.push_back(event);
-    output_buffers.push_back(mem);
+                                 queue_.get(), buffer, CL_FALSE,
+                                 0u, num_bytes, container.data());
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
-             sizeof(cl_mem), static_cast<const void*>(&output_buffers.back()));
-    sizes.push_back(size);
+             sizeof(cl_mem), static_cast<const void*>(&buffer));
+    lengths.push_back(len);
+    events.push_back(event);
+    outputs.emplace_back(buffer, false);
   }
 
   template <long I, int InPos, int OutPos, class T>
-  void create_buffer(const in_out<T,val,mref>&, evnt_vec& events, size_vec&,
-                     args_vec&, args_vec&, args_vec&, outp_tup& output_tuple,
+  void create_buffer(const in_out<T,val,mref>&, evnt_vec& events, len_vec&,
+                     mem_vec&, mem_vec&, mem_vec&, out_tup& result,
                      message& msg) {
     using value_type = typename detail::tl_at<unpacked_types, I>::type;
     using container_type = std::vector<value_type>;
     auto& container = msg.get_as<container_type>(InPos);
-    auto size = container.size();
-    size_t buffer_size = sizeof(value_type) * size;
+    auto len = container.size();
+    size_t num_bytes = sizeof(value_type) * len;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
-                        CL_MEM_READ_WRITE, buffer_size, nullptr);
+                        CL_MEM_READ_WRITE, num_bytes, nullptr);
     auto event = v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
                                  queue_.get(), buffer, CL_FALSE,
-                                 0u, buffer_size, container.data());
-    events.push_back(std::move(event));
-    auto mem = mem_ref<value_type>{
-      size, placement::global_mem, queue_, mem_ptr{buffer, false},
+                                 0u, num_bytes, container.data());
+    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
+             sizeof(cl_mem), static_cast<const void*>(&buffer));
+    events.push_back(event);
+    std::get<OutPos>(result) = mem_ref<value_type>{
+      len, placement::global_mem, queue_, mem_ptr{buffer, false},
       CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY,
       nullptr, false, none
     };
-    std::get<OutPos>(output_tuple) = mem;
-    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
-             sizeof(cl_mem), static_cast<const void*>(&mem.get()));
   }
 
   template <long I, int InPos, int OutPos, class T>
   void create_buffer(const in_out<T,mref,val>&, evnt_vec& events,
-                     size_vec& sizes, args_vec&, args_vec& output_buffers,
-                     args_vec&, outp_tup&, message& msg) {
+                     len_vec& lengths, mem_vec&, mem_vec& outputs,
+                     mem_vec&, out_tup&, message& msg) {
     using value_type = typename detail::tl_at<unpacked_types, I>::type;
     using container_type = mem_ref<value_type>;
-    auto mem = msg.get_as<container_type>(InPos);
-    auto event = mem.take_event();
+    auto container = msg.get_as<container_type>(InPos);
+    CAF_ASSERT(container.location() == placement::global_mem);
+    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
+             sizeof(cl_mem), static_cast<const void*>(&container.get()));
+    auto event = container.take_event();
     if (event != nullptr)
       events.push_back(event);
-    CAF_ASSERT(mem.location() == placement::global_mem);
-    output_buffers.push_back(mem.get());
-    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
-             sizeof(cl_mem), static_cast<const void*>(&output_buffers.back()));
-    sizes.push_back(mem.size());
+    lengths.push_back(container.size());
+    outputs.push_back(container.get());
   }
 
   template <long I, int InPos, int OutPos, class T>
-  void create_buffer(const in_out<T,mref,mref>&, evnt_vec& events, size_vec&,
-                     args_vec&, args_vec&, args_vec&, outp_tup& output_tuple,
+  void create_buffer(const in_out<T,mref,mref>&, evnt_vec& events, len_vec&,
+                     mem_vec&, mem_vec&, mem_vec&, out_tup& result,
                      message& msg) {
     using value_type = typename detail::tl_at<unpacked_types, I>::type;
     using container_type = mem_ref<value_type>;
-    auto mem = msg.get_as<container_type>(InPos);
-    auto event = mem.take_event();
+    auto container = msg.get_as<container_type>(InPos);
+    CAF_ASSERT(container.location() == placement::global_mem);
+    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
+                     sizeof(cl_mem), static_cast<const void*>(&container.get()));
+    auto event = container.take_event();
     if (event != nullptr)
       events.push_back(event);
-    CAF_ASSERT(mem.location() == placement::global_mem);
-    std::get<OutPos>(output_tuple) = mem;
-    v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
-                     sizeof(cl_mem), static_cast<const void*>(&mem.get()));
+    std::get<OutPos>(result) = container;
   }
 
   // Two functions to handle `out` arguments: val and mref
 
   template <long I, int InPos, int OutPos, class T>
-  void create_buffer(const out<T,val>& wrapper, evnt_vec&, size_vec& sizes,
-                     args_vec&, args_vec& output_buffers, args_vec&, outp_tup&,
+  void create_buffer(const out<T,val>& wrapper, evnt_vec&, len_vec& lengths,
+                     mem_vec&, mem_vec& outputs, mem_vec&, out_tup&,
                      message& msg) {
     using value_type = typename detail::tl_at<unpacked_types, I>::type;
-    auto size = get_size_for_argument(wrapper, msg, default_buffer_size_);
-    auto buffer_size = sizeof(value_type) * size;
+    auto len = argument_length(wrapper, msg, default_length_);
+    auto num_bytes = sizeof(value_type) * len;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
                         CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY,
-                        buffer_size, nullptr);
-    mem_ptr tmp;
-    tmp.reset(buffer, false);
-    output_buffers.push_back(tmp);
+                        num_bytes, nullptr);
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
-             sizeof(cl_mem), static_cast<const void*>(&output_buffers.back()));
-    sizes.push_back(size);
+             sizeof(cl_mem), static_cast<const void*>(&buffer));
+    outputs.emplace_back(buffer, false);
+    lengths.push_back(len);
   }
 
   template <long I, int InPos, int OutPos, class T>
-  void create_buffer(const out<T,mref>& wrapper, evnt_vec&, size_vec&,
-                     args_vec&, args_vec&, args_vec&, outp_tup& output_tuple,
+  void create_buffer(const out<T,mref>& wrapper, evnt_vec&, len_vec&,
+                     mem_vec&, mem_vec&, mem_vec&, out_tup& result,
                      message& msg) {
     using value_type = typename detail::tl_at<unpacked_types, I>::type;
-    auto size = get_size_for_argument(wrapper, msg, default_buffer_size_);
-    auto buffer_size = sizeof(value_type) * size;
+    auto len = argument_length(wrapper, msg, default_length_);
+    auto num_bytes = sizeof(value_type) * len;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
                         CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY,
-                        buffer_size, nullptr);
-    auto mem = mem_ref<value_type>{
-      size, placement::global_mem, queue_, mem_ptr{buffer, false},
-      CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY,
-      nullptr, false, none
-    };
-    std::get<OutPos>(output_tuple) = mem;
+                        num_bytes, nullptr);
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
-             sizeof(cl_mem), static_cast<const void*>(&mem.get()));
+             sizeof(cl_mem), static_cast<const void*>(&buffer));
+    std::get<OutPos>(result) = mem_ref<value_type>{
+      len, placement::global_mem, queue_, {buffer, false},
+      CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY, nullptr, false, none
+    };
   }
 
   // One function to handle `scratch` buffers
 
   template <long I, int InPos, int OutPos, class T>
-  void create_buffer(const scratch<T>& wrapper, evnt_vec&, size_vec&,
-                     args_vec&, args_vec&, args_vec& scratch_buffers,
-                     outp_tup&, message& msg) {
+  void create_buffer(const scratch<T>& wrapper, evnt_vec&, len_vec&,
+                     mem_vec&, mem_vec&, mem_vec& scratch,
+                     out_tup&, message& msg) {
     using value_type = typename detail::tl_at<unpacked_types, I>::type;
-    auto size = get_size_for_argument(wrapper, msg, default_buffer_size_);
-    auto buffer_size = sizeof(value_type) * size;
+    auto len = argument_length(wrapper, msg, default_length_);
+    auto num_bytes = sizeof(value_type) * len;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
                         CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS,
-                        buffer_size, nullptr);
-    mem_ptr tmp;
-    tmp.reset(buffer, false);
-    scratch_buffers.push_back(tmp);
+                        num_bytes, nullptr);
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
-             sizeof(cl_mem), static_cast<const void*>(&scratch_buffers.back()));
+             sizeof(cl_mem), static_cast<const void*>(&buffer));
+    scratch.emplace_back(buffer, false);
   }
 
   // One functions to handle `local` arguments
 
   template <long I, int InPos, int OutPos, class T>
-  void create_buffer(const local<T>& wrapper, evnt_vec&, size_vec&,
-                     args_vec&, args_vec&, args_vec&, outp_tup&,
+  void create_buffer(const local<T>& wrapper, evnt_vec&, len_vec&,
+                     mem_vec&, mem_vec&, mem_vec&, out_tup&,
                      message& msg) {
     using value_type  = typename detail::tl_at<unpacked_types, I>::type;
-    auto size = wrapper(msg);
-    auto buffer_size = sizeof(value_type) * size;
+    auto len = wrapper(msg);
+    auto num_bytes = sizeof(value_type) * len;
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
-             buffer_size, nullptr);
+             num_bytes, nullptr);
   }
 
   // Two functions to handle `priv` arguments: val and hidden
 
   template <long I, int InPos, int OutPos, class T>
-  void create_buffer(const priv<T, val>&, evnt_vec&, size_vec&,
-                     args_vec&, args_vec&, args_vec&, outp_tup&, message& msg) {
+  void create_buffer(const priv<T, val>&, evnt_vec&, len_vec&,
+                     mem_vec&, mem_vec&, mem_vec&, out_tup&, message& msg) {
     using value_type = typename detail::tl_at<unpacked_types, I>::type;
     auto value_size = sizeof(value_type);
     auto& value = msg.get_as<value_type>(InPos);
@@ -472,8 +460,8 @@ public:
   }
 
   template <long I, int InPos, int OutPos, class T>
-  void create_buffer(const priv<T, hidden>& wrapper, evnt_vec&, size_vec&,
-                     args_vec&, args_vec&, args_vec&, outp_tup&, message& msg) {
+  void create_buffer(const priv<T, hidden>& wrapper, evnt_vec&, len_vec&,
+                     mem_vec&, mem_vec&, mem_vec&, out_tup&, message& msg) {
     auto value_size = sizeof(T);
     auto value = wrapper(msg);
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
@@ -483,9 +471,9 @@ public:
   /// Helper function to calculate the elements in a buffer from in and out
   /// argument wrappers.
   template <class Fun>
-  size_t get_size_for_argument(Fun& f, message& m, size_t default_size) {
-    auto size = f(m);
-    return  size && (*size > 0) ? *size : default_size;
+  size_t argument_length(Fun& f, message& m, size_t fallback) {
+    auto length = f(m);
+    return  length && (*length > 0) ? *length : fallback;
   }
 
   kernel_ptr kernel_;
@@ -496,7 +484,7 @@ public:
   input_mapping map_args_;
   output_mapping map_results_;
   std::tuple<Ts...> kernel_signature_;
-  size_t default_buffer_size_;
+  size_t default_length_;
 };
 
 } // namespace opencl

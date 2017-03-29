@@ -49,22 +49,22 @@ public:
   command(std::tuple<strong_actor_ptr,message_id> handle,
           strong_actor_ptr parent,
           std::vector<cl_event> events,
-          std::vector<mem_ptr> input_bufs,
-          std::vector<mem_ptr> output_bufs,
-          std::vector<mem_ptr> scratch_bufs,
-          std::vector<size_t> result_sizes,
+          std::vector<mem_ptr> inputs,
+          std::vector<mem_ptr> outputs,
+          std::vector<mem_ptr> scratches,
+          std::vector<size_t> lengths,
           message msg,
           std::tuple<Ts...> output_tuple,
           spawn_config config)
-      : result_sizes_(std::move(result_sizes)),
+      : lengths_(std::move(lengths)),
         handle_(std::move(handle)),
         cl_actor_(std::move(parent)),
         mem_in_events_(std::move(events)),
         execution_(nullptr),
         marker_(nullptr),
-        input_buffers_(std::move(input_bufs)),
-        output_buffers_(std::move(output_bufs)),
-        scratch_buffers_(std::move(scratch_bufs)),
+        input_buffers_(std::move(inputs)),
+        output_buffers_(std::move(outputs)),
+        scratch_buffers_(std::move(scratches)),
         results_(output_tuple),
         msg_(std::move(msg)),
         config_(std::move(config)) {
@@ -213,7 +213,7 @@ private:
     cl_event event;
     events.push_back(event);
     //events.emplace_back();
-    auto size = result_sizes_[pos];
+    auto size = lengths_[pos];
     auto buffer_size = sizeof(T) * size;
     std::get<I>(results_).resize(size);
     auto err = clEnqueueReadBuffer(p->queue_.get(), output_buffers_[pos].get(),
@@ -257,7 +257,7 @@ private:
                              nullptr);
   }
 
-  std::vector<size_t> result_sizes_;
+  std::vector<size_t> lengths_;
   std::tuple<strong_actor_ptr,message_id> handle_;
   strong_actor_ptr cl_actor_;
   std::vector<cl_event> mem_in_events_;
