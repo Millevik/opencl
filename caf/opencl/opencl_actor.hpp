@@ -170,6 +170,10 @@ public:
                message content, execution_unit*) override {
     CAF_PUSH_AID(id());
     CAF_LOG_TRACE("");
+    if (content.match_element<spawn_config>(0)) {
+      config_ = content.get_as<spawn_config>(0);
+      content = content.drop(1);
+    }
     if (map_args_) {
       auto mapped = map_args_(content);
       if (!mapped) {

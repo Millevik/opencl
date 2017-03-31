@@ -108,8 +108,8 @@ public:
       data_or_nullptr(config_.offsets()),
       data_or_nullptr(config_.dimensions()),
       data_or_nullptr(config_.local_dimensions()),
-      static_cast<cl_uint>(mem_in_events_.size()),
-      (mem_in_events_.empty() ? nullptr : mem_in_events_.data()), &execution_
+      mem_in_events_.size(), mem_in_events_.data(),
+      &execution_
     );
     if (err != CL_SUCCESS) {
       CAF_LOG_ERROR("clEnqueueNDRangeKernel: "
@@ -210,9 +210,7 @@ private:
   void enqueue_read(std::vector<T>&, cl_event& kernel_done,
                     std::vector<cl_event>& events, size_t& pos) {
     auto p = static_cast<Actor*>(actor_cast<abstract_actor*>(cl_actor_));
-    cl_event event;
-    events.push_back(event);
-    //events.emplace_back();
+    events.emplace_back();
     auto size = lengths_[pos];
     auto buffer_size = sizeof(T) * size;
     std::get<I>(results_).resize(size);

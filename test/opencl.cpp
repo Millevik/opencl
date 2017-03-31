@@ -1014,7 +1014,7 @@ void test_varying_arguments(actor_system& sys) {
   auto input2 = dev.global_argument(input1);
   auto w1 = mngr.spawn_new(prog, kn_varying, conf,
                            in<int>{}, out<int>{}, in<int>{}, out<int>{});
-  self->send(w1, make_iota_vector<int>(size), make_iota_vector<int>(size));
+  self->send(w1, input1, input1);
   self->receive([&](const ivec& res1, const ivec& res2) {
     check_vector_results("Varying args (vec only), output 1", input1, res1);
     check_vector_results("Varying args (vec only), output 2", input1, res2);
