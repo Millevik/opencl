@@ -165,6 +165,15 @@ public:
     }
   }
 
+  bool synchronize() {
+    if (event_ == nullptr)
+      return false;
+    auto err = clWaitForEvents(1, &event_);
+    if (err != CL_SUCCESS)
+      return false;
+    return true;
+  }
+
   inline const mem_ptr& get() const {
     return memory_;
   }
