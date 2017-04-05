@@ -96,6 +96,10 @@ device device::create(const context_ptr& context, const device_ptr& device_id,
   return dev;
 }
 
+void device::synchronize() {
+  clFinish(queue_.get());
+}
+
 string device::info_string(const device_ptr& device_id, unsigned info_flag) {
   size_t size;
   clGetDeviceInfo(device_id.get(), info_flag, 0, nullptr, &size);

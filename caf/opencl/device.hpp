@@ -86,6 +86,8 @@ public:
   /// Intialize a new device in a context using a sepcific device_id
   static device create(const context_ptr& context, const device_ptr& device_id,
                        unsigned id);
+  /// Synchronizes all commands in its queue, waiting for them to finish.
+  void synchronize();
   /// Get the id assigned by caf
   inline unsigned get_id() const;
   /// Returns device info on CL_DEVICE_ADDRESS_BITS
