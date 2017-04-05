@@ -96,7 +96,6 @@ public:
     // because they require non-standard error handling
     CAF_LOG_TRACE("command::enqueue() mixed");
     this->ref(); // reference held by the OpenCL comand queue
-    cl_event execution_;
     auto data_or_nullptr = [](const dim_vec& vec) {
       return vec.empty() ? nullptr : vec.data();
     };
@@ -165,7 +164,6 @@ public:
     // because they require non-standard error handling
     CAF_LOG_TRACE("command::enqueue() all references");
     this->ref(); // reference held by the OpenCL command queue
-    cl_event execution_;
     auto data_or_nullptr = [](const dim_vec& vec) {
       return vec.empty() ? nullptr : vec.data();
     };
