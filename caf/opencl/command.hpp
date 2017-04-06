@@ -41,6 +41,10 @@
 namespace caf {
 namespace opencl {
 
+/// A command represents the execution of a kernel on a device. It handles the
+/// OpenCL calls to enqueue the kernel with the index space and keeps references
+/// to the management data during the execution. Furthermore, the command sends
+/// the execution results to the responsible actor.
 template <class Actor, class... Ts>
 class command : public ref_counted {
 public:
@@ -86,6 +90,10 @@ public:
       v1callcl(CAF_CLF(clReleaseEvent),execution_);
   }
 
+  /// Enqueue the kernel for execution, schedule reading of the results and 
+  /// set a callback to send the results to the actor identified by the handle.
+  /// Only called if the results includes at least one type that is not a
+  /// mem_ref.
   template <class Q = result_types>
   typename std::enable_if<
     !detail::tl_forall<Q, is_ref_type>::value,
@@ -103,12 +111,12 @@ public:
     // OpenCL expects cl_uint (unsigned int), hence the cast
     cl_int err = clEnqueueNDRangeKernel(
       parent->queue_.get(), parent->kernel_.get(),
-      static_cast<cl_uint>(config_.dimensions().size()),
+      static_cast<unsigned int>(config_.dimensions().size()),
       data_or_nullptr(config_.offsets()),
       data_or_nullptr(config_.dimensions()),
       data_or_nullptr(config_.local_dimensions()),
       static_cast<unsigned int>(mem_in_events_.size()),
-      mem_in_events_.data(),
+      (mem_in_events_.empty() ? nullptr : mem_in_events_.data()),
       &execution_
     );
     if (err != CL_SUCCESS) {
@@ -124,8 +132,9 @@ public:
 #if defined(__APPLE__)
     err = clEnqueueMarkerWithWaitList(
       parent->queue_.get(),
-      static_cast<cl_uint>(mem_out_events_.size()),
-      mem_out_events_.data(), &marker_
+      static_cast<unsigned int>(mem_out_events_.size()),
+      mem_out_events_.data(),
+      &marker_
     );
     std::string name = "clEnqueueMarkerWithWaitList";
 #else
@@ -155,6 +164,10 @@ public:
     }
   }
 
+  /// Enqueue the kernel for execution and send the mem_refs relating to the
+  /// results to the next actor. A callback is set to clean up the commmand
+  /// once the execution is finished. Only called if the results only consist
+  /// of mem_ref types.
   template <class Q = result_types>
   typename std::enable_if<
     detail::tl_forall<Q, is_ref_type>::value,
@@ -176,8 +189,9 @@ public:
       data_or_nullptr(config_.offsets()),
       data_or_nullptr(config_.dimensions()),
       data_or_nullptr(config_.local_dimensions()),
-      static_cast<cl_uint>(mem_in_events_.size()),
-      (mem_in_events_.empty() ? nullptr : mem_in_events_.data()), &execution_
+      static_cast<unsigned int>(mem_in_events_.size()),
+      (mem_in_events_.empty() ? nullptr : mem_in_events_.data()),
+      &execution_
     );
     if (err != CL_SUCCESS) {
       CAF_LOG_ERROR("clEnqueueNDRangeKernel: "
@@ -206,7 +220,7 @@ public:
 
 private:
   template <long I, class T>
-  void enqueue_read(std::vector<T>&, cl_event& kernel_done,
+  void enqueue_read(std::vector<T>&, cl_event& done,
                     std::vector<cl_event>& events, size_t& pos) {
     auto p = static_cast<Actor*>(actor_cast<abstract_actor*>(cl_actor_));
     events.emplace_back();
@@ -216,7 +230,7 @@ private:
     auto err = clEnqueueReadBuffer(p->queue_.get(), output_buffers_[pos].get(),
                                    CL_FALSE, 0, buffer_size,
                                    std::get<I>(results_).data(), 1,
-                                   &kernel_done, &events.back());
+                                   &done, &events.back());
     if (err != CL_SUCCESS) {
       this->deref(); // failed to enqueue command
       throw std::runtime_error("clEnqueueReadBuffer: " + get_opencl_error(err));
@@ -227,7 +241,6 @@ private:
   template <long I, class T>
   void enqueue_read(mem_ref<T>&, cl_event&, std::vector<cl_event>&, size_t&) {
     // Nothing to read back if we return references.
-    // TODO: ensure the reference's event is set to nullptr?
   }
 
   void enqueue_read_buffers(cl_event&, size_t&, std::vector<cl_event>&,
@@ -236,11 +249,11 @@ private:
   }
 
   template <long I, long... Is>
-  void enqueue_read_buffers(cl_event& kernel_done, size_t& pos,
+  void enqueue_read_buffers(cl_event& done, size_t& pos,
                             std::vector<cl_event>& events,
                             detail::int_list<I, Is...>) {
-    enqueue_read<I>(std::get<I>(results_), kernel_done, events, pos);
-    enqueue_read_buffers(kernel_done, pos, events, detail::int_list<Is...>{});
+    enqueue_read<I>(std::get<I>(results_), done, events, pos);
+    enqueue_read_buffers(done, pos, events, detail::int_list<Is...>{});
   }
 
   // handle results if execution result includes a value type
@@ -265,7 +278,7 @@ private:
   std::vector<mem_ptr> output_buffers_;
   std::vector<mem_ptr> scratch_buffers_;
   std::tuple<Ts...> results_;
-  message msg_; // required to keep the argument buffers alive (async copy)
+  message msg_; // keeps the argument buffers alive for async copy to device
   spawn_config config_;
 };
 
