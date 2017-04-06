@@ -107,7 +107,8 @@ public:
       data_or_nullptr(config_.offsets()),
       data_or_nullptr(config_.dimensions()),
       data_or_nullptr(config_.local_dimensions()),
-      mem_in_events_.size(), mem_in_events_.data(),
+      static_cast<unsigned int>(mem_in_events_.size()),
+      mem_in_events_.data(),
       &execution_
     );
     if (err != CL_SUCCESS) {
@@ -221,13 +222,13 @@ private:
       throw std::runtime_error("clEnqueueReadBuffer: " + get_opencl_error(err));
     }
     pos += 1;
-  };
+  }
 
   template <long I, class T>
   void enqueue_read(mem_ref<T>&, cl_event&, std::vector<cl_event>&, size_t&) {
     // Nothing to read back if we return references.
     // TODO: ensure the reference's event is set to nullptr?
-  };
+  }
 
   void enqueue_read_buffers(cl_event&, size_t&, std::vector<cl_event>&,
                             detail::int_list<>) {

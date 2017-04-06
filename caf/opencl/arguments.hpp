@@ -144,7 +144,7 @@ struct local {
       return none;
     };
   }
-  local(size_t size) : size_(size) { };
+  local(size_t size) : size_(size) { }
   size_t operator()(message& msg) const {
     if (fun_) {
       auto res = fun_(msg);

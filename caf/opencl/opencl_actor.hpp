@@ -42,7 +42,6 @@
 #include "caf/opencl/opencl_err.hpp"
 #include "caf/opencl/spawn_config.hpp"
 
-
 namespace caf {
 namespace opencl {
 
@@ -222,9 +221,8 @@ public:
     enqueue(ptr->sender, ptr->mid, ptr->move_content_to_message(), eu);
   }
 
-  opencl_actor(actor_config actor_conf,
-               const program& prog, kernel_ptr kernel,
-               spawn_config spawn_conf,
+  opencl_actor(actor_config actor_conf, const program& prog,
+               kernel_ptr kernel, spawn_config spawn_conf,
                input_mapping map_args, output_mapping map_result,
                std::tuple<Ts...> xs)
       : monitorable_actor(actor_conf),
@@ -237,15 +235,14 @@ public:
         map_results_(std::move(map_result)),
         kernel_signature_(std::move(xs)) {
     CAF_LOG_TRACE(CAF_ARG(this->id()));
-    default_length_ = std::accumulate(config_.dimensions().begin(),
-                                      config_.dimensions().end(),
+    default_length_ = std::accumulate(std::begin(config_.dimensions()),
+                                      std::end(config_.dimensions()),
                                       size_t{1},
                                       std::multiplies<size_t>{});
   }
 
   void add_kernel_arguments(evnt_vec&, mem_vec&, mem_vec&, mem_vec&,
-                            out_tup&, len_vec&, message&,
-                            detail::int_list<>) {
+                            out_tup&, len_vec&, message&, detail::int_list<>) {
     // nop
   }
 
@@ -257,15 +254,12 @@ public:
                             mem_vec& scratch, out_tup& result, len_vec& lengths,
                             message& msg, detail::int_list<I, Is...>) {
     using arg_type = typename caf::detail::tl_at<processing_list,I>::type;
-    // TODO: In case of mem_refs, should we check if device used for execution
-    //       is the same and should we try to transfer memory in such cases?
     create_buffer<I, arg_type::in_pos, arg_type::out_pos>(
       std::get<I>(kernel_signature_), events, lengths, inputs,
       outputs, scratch, result, msg
     );
-    add_kernel_arguments(events, inputs, outputs,
-                         scratch, result, lengths,
-                         msg, detail::int_list<Is...>{});
+    add_kernel_arguments(events, inputs, outputs, scratch, result, lengths, msg,
+                         detail::int_list<Is...>{});
   }
 
   // Two functions to handle `in` arguments: val and mref
@@ -280,9 +274,9 @@ public:
     auto len = container.size();
     size_t num_bytes = sizeof(value_type) * len;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
-                        CL_MEM_READ_WRITE, num_bytes, nullptr);
+                        size_t{CL_MEM_READ_WRITE}, num_bytes, nullptr);
     auto event = v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
-                                 queue_.get(), buffer, CL_FALSE,
+                                 queue_.get(), buffer, 0u, // --> CL_FALSE,
                                  0u, num_bytes, container.data());
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              sizeof(cl_mem), static_cast<const void*>(&buffer));
@@ -317,9 +311,9 @@ public:
     auto len = container.size();
     size_t num_bytes = sizeof(value_type) * len;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
-                        CL_MEM_READ_WRITE, num_bytes, nullptr);
+                        size_t{CL_MEM_READ_WRITE}, num_bytes, nullptr);
     auto event = v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
-                                 queue_.get(), buffer, CL_FALSE,
+                                 queue_.get(), buffer, 0u, // --> CL_FALSE,
                                  0u, num_bytes, container.data());
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              sizeof(cl_mem), static_cast<const void*>(&buffer));
@@ -338,16 +332,16 @@ public:
     auto len = container.size();
     size_t num_bytes = sizeof(value_type) * len;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
-                        CL_MEM_READ_WRITE, num_bytes, nullptr);
+                        size_t{CL_MEM_READ_WRITE}, num_bytes, nullptr);
     auto event = v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
-                                 queue_.get(), buffer, CL_FALSE,
+                                 queue_.get(), buffer, 0u, // --> CL_FALSE,
                                  0u, num_bytes, container.data());
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              sizeof(cl_mem), static_cast<const void*>(&buffer));
     events.push_back(event);
     std::get<OutPos>(result) = mem_ref<value_type>{
       len, placement::global_mem, queue_, mem_ptr{buffer, false},
-      CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY,
+      size_t{CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY},
       nullptr, false, none
     };
   }
@@ -395,7 +389,7 @@ public:
     auto len = argument_length(wrapper, msg, default_length_);
     auto num_bytes = sizeof(value_type) * len;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
-                        CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY,
+                        size_t{CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY},
                         num_bytes, nullptr);
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              sizeof(cl_mem), static_cast<const void*>(&buffer));
@@ -411,13 +405,13 @@ public:
     auto len = argument_length(wrapper, msg, default_length_);
     auto num_bytes = sizeof(value_type) * len;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(),
-                        CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY,
+                        size_t{CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY},
                         num_bytes, nullptr);
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              sizeof(cl_mem), static_cast<const void*>(&buffer));
     std::get<OutPos>(result) = mem_ref<value_type>{
       len, placement::global_mem, queue_, {buffer, false},
-      CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY, nullptr, false, none
+      size_t{CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY}, nullptr, false, none
     };
   }
 

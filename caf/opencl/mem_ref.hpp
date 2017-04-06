@@ -282,7 +282,7 @@ public:
   ~mem_ref() {
     if (event_ != nullptr)
       clReleaseEvent(event_);
-  };
+  }
 
   void swap(mem_ref<T>& other) {
     std::swap(num_elements_, other.num_elements_);
