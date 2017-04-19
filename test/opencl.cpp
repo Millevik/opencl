@@ -398,11 +398,12 @@ void test_opencl(actor_system& sys) {
   try {
     /* auto expected_error = */ mngr.create_program(kernel_source_error);
   } catch (const exception& exc) {
-    auto cond = (strcmp("clBuildProgram: CL_BUILD_PROGRAM_FAILURE",
-                        exc.what()) == 0);
-   CAF_CHECK(cond);
-   if (!cond)
-     CAF_ERROR("Wrong exception cought for program build failure.");
+    std::string starts_with("clBuildProgram: CL_BUILD_PROGRAM_FAILURE");
+    auto cond = (strncmp(exc.what(), starts_with.c_str(),
+                         starts_with.size()) == 0);
+    CAF_CHECK(cond);
+    if (!cond)
+      CAF_ERROR("Wrong exception cought for program build failure.");
   }
   // create program with opencl compiler flags
   auto prog5 = mngr.create_program(kernel_source_compiler_flag, compiler_flag);
@@ -1164,4 +1165,3 @@ CAF_TEST(opencl_opencl_actor) {
   test_local(system);
   system.await_all_actors_done();
 }
-

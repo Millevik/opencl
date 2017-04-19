@@ -150,11 +150,6 @@ program manager::create_program(const char* kernel_source, const char* options,
   if (err != CL_SUCCESS) {
     ostringstream oss;
     oss << "clBuildProgram: " << get_opencl_error(err);
-// the build log will be printed by the pfn_notify (see opencl/manger.cpp)
-#ifndef __APPLE__
-    // seems that just apple implemented the
-    // pfn_notify callback, but we can get
-    // the build log
     if (err == CL_BUILD_PROGRAM_FAILURE) {
       size_t buildlog_buffer_size = 0;
       // get the log length
@@ -166,11 +161,17 @@ program manager::create_program(const char* kernel_source, const char* options,
                             sizeof(char) * buildlog_buffer_size,
                             buffer.data(), nullptr);
       ostringstream ss;
-      ss << "Build log:\n" << string(buffer.data())
-         << "\n#######################################";
+      ss << "############## Build log ##############"
+         << endl << string(buffer.data()) << endl
+         << "#######################################";
+      // seems that just apple implemented the
+      // pfn_notify callback, but we can get
+      // the build log
+#ifndef __APPLE__
       CAF_LOG_ERROR(CAF_ARG(ss.str()));
-    }
 #endif
+      oss << endl << ss.str();
+    }
     throw runtime_error(oss.str());
   }
   cl_uint number_of_kernels = 0;
