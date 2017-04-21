@@ -53,9 +53,9 @@ public:
   command(std::tuple<strong_actor_ptr,message_id> handle,
           strong_actor_ptr parent,
           std::vector<cl_event> events,
-          std::vector<mem_ptr> inputs,
-          std::vector<mem_ptr> outputs,
-          std::vector<mem_ptr> scratches,
+          std::vector<cl_mem_ptr> inputs,
+          std::vector<cl_mem_ptr> outputs,
+          std::vector<cl_mem_ptr> scratches,
           std::vector<size_t> lengths,
           message msg,
           std::tuple<Ts...> output_tuple,
@@ -64,8 +64,6 @@ public:
         handle_(std::move(handle)),
         cl_actor_(std::move(parent)),
         mem_in_events_(std::move(events)),
-        execution_(nullptr),
-        marker_(nullptr),
         input_buffers_(std::move(inputs)),
         output_buffers_(std::move(outputs)),
         scratch_buffers_(std::move(scratches)),
@@ -78,16 +76,12 @@ public:
   ~command() override {
     for (auto& e : mem_in_events_) {
       if (e)
-        v1callcl(CAF_CLF(clReleaseEvent),e);
+        v1callcl(CAF_CLF(clReleaseEvent), e);
     }
     for (auto& e : mem_out_events_) {
       if (e)
-        v1callcl(CAF_CLF(clReleaseEvent),e);
+        v1callcl(CAF_CLF(clReleaseEvent), e);
     }
-    if (marker_)
-      v1callcl(CAF_CLF(clReleaseEvent),marker_);
-    if (execution_)
-      v1callcl(CAF_CLF(clReleaseEvent),execution_);
   }
 
   /// Enqueue the kernel for execution, schedule reading of the results and 
@@ -109,6 +103,7 @@ public:
     };
     auto parent = static_cast<Actor*>(actor_cast<abstract_actor*>(cl_actor_));
     // OpenCL expects cl_uint (unsigned int), hence the cast
+    mem_out_events_.emplace_back();
     cl_int err = clEnqueueNDRangeKernel(
       parent->queue_.get(), parent->kernel_.get(),
       static_cast<unsigned int>(config_.dimensions().size()),
@@ -117,7 +112,7 @@ public:
       data_or_nullptr(config_.local_dimensions()),
       static_cast<unsigned int>(mem_in_events_.size()),
       (mem_in_events_.empty() ? nullptr : mem_in_events_.data()),
-      &execution_
+      &mem_out_events_.back()
     );
     if (err != CL_SUCCESS) {
       CAF_LOG_ERROR("clEnqueueNDRangeKernel: "
@@ -126,27 +121,29 @@ public:
       return;
     }
     size_t pos = 0;
-    enqueue_read_buffers(execution_, pos, mem_out_events_,
-                         detail::get_indices(results_));
     CAF_ASSERT(!mem_out_events_.empty());
+    enqueue_read_buffers(pos, mem_out_events_, detail::get_indices(results_));
+    CAF_ASSERT(mem_out_events_.size() > 1);
+    cl_event marker_event;
 #if defined(__APPLE__)
     err = clEnqueueMarkerWithWaitList(
       parent->queue_.get(),
       static_cast<unsigned int>(mem_out_events_.size()),
       mem_out_events_.data(),
-      &marker_
+      &marker_event
     );
     std::string name = "clEnqueueMarkerWithWaitList";
 #else
-    err = clEnqueueMarker(parent->queue_.get(), &marker_);
+    err = clEnqueueMarker(parent->queue_.get(), &marker_event);
     std::string name = "clEnqueueMarker";
 #endif
+    callback_.reset(marker_event, false);
     if (err != CL_SUCCESS) {
       CAF_LOG_ERROR(name << ": " << CAF_ARG(get_opencl_error(err)));
       this->deref(); // callback is not set
       return;
     }
-    err = clSetEventCallback(marker_, CL_COMPLETE,
+    err = clSetEventCallback(callback_.get(), CL_COMPLETE,
                              [](cl_event, cl_int, void* data) {
                                auto cmd = reinterpret_cast<command*>(data);
                                cmd->handle_results();
@@ -182,7 +179,7 @@ public:
       return vec.empty() ? nullptr : vec.data();
     };
     auto parent = static_cast<Actor*>(actor_cast<abstract_actor*>(cl_actor_));
-    // OpenCL expects cl_uint (unsigned int), hence the cast
+    cl_event execution_event;
     cl_int err = clEnqueueNDRangeKernel(
       parent->queue_.get(), parent->kernel_.get(),
       static_cast<cl_uint>(config_.dimensions().size()),
@@ -191,15 +188,16 @@ public:
       data_or_nullptr(config_.local_dimensions()),
       static_cast<unsigned int>(mem_in_events_.size()),
       (mem_in_events_.empty() ? nullptr : mem_in_events_.data()),
-      &execution_
+      &execution_event
     );
+    callback_.reset(execution_event, false);
     if (err != CL_SUCCESS) {
       CAF_LOG_ERROR("clEnqueueNDRangeKernel: "
                     << CAF_ARG(get_opencl_error(err)));
       this->deref();
       return;
     }
-    err = clSetEventCallback(execution_, CL_COMPLETE,
+    err = clSetEventCallback(callback_.get(), CL_COMPLETE,
                              [](cl_event, cl_int, void* data) {
                                auto c = reinterpret_cast<command*>(data);
                                c->deref();
@@ -213,15 +211,15 @@ public:
     err = clFlush(parent->queue_.get());
     if (err != CL_SUCCESS)
       CAF_LOG_ERROR("clFlush: " << CAF_ARG(get_opencl_error(err)));
-    auto msg = msg_adding_event{execution_}(results_);
+    auto msg = msg_adding_event{callback_}(results_);
     get<0>(handle_)->enqueue(cl_actor_, get<1>(handle_), std::move(msg),
                              nullptr);
   }
 
 private:
   template <long I, class T>
-  void enqueue_read(std::vector<T>&, cl_event& done,
-                    std::vector<cl_event>& events, size_t& pos) {
+  void enqueue_read(std::vector<T>&, std::vector<cl_event>& events,
+                    size_t& pos) {
     auto p = static_cast<Actor*>(actor_cast<abstract_actor*>(cl_actor_));
     events.emplace_back();
     auto size = lengths_[pos];
@@ -230,7 +228,7 @@ private:
     auto err = clEnqueueReadBuffer(p->queue_.get(), output_buffers_[pos].get(),
                                    CL_FALSE, 0, buffer_size,
                                    std::get<I>(results_).data(), 1,
-                                   &done, &events.back());
+                                   events.data(), &events.back());
     if (err != CL_SUCCESS) {
       this->deref(); // failed to enqueue command
       throw std::runtime_error("clEnqueueReadBuffer: " + get_opencl_error(err));
@@ -239,21 +237,20 @@ private:
   }
 
   template <long I, class T>
-  void enqueue_read(mem_ref<T>&, cl_event&, std::vector<cl_event>&, size_t&) {
+  void enqueue_read(mem_ref<T>&, std::vector<cl_event>&, size_t&) {
     // Nothing to read back if we return references.
   }
 
-  void enqueue_read_buffers(cl_event&, size_t&, std::vector<cl_event>&,
+  void enqueue_read_buffers(size_t&, std::vector<cl_event>&,
                             detail::int_list<>) {
     // end of recursion
   }
 
   template <long I, long... Is>
-  void enqueue_read_buffers(cl_event& done, size_t& pos,
-                            std::vector<cl_event>& events,
+  void enqueue_read_buffers(size_t& pos, std::vector<cl_event>& events,
                             detail::int_list<I, Is...>) {
-    enqueue_read<I>(std::get<I>(results_), done, events, pos);
-    enqueue_read_buffers(done, pos, events, detail::int_list<Is...>{});
+    enqueue_read<I>(std::get<I>(results_), events, pos);
+    enqueue_read_buffers(pos, events, detail::int_list<Is...>{});
   }
 
   // handle results if execution result includes a value type
@@ -272,11 +269,10 @@ private:
   strong_actor_ptr cl_actor_;
   std::vector<cl_event> mem_in_events_;
   std::vector<cl_event> mem_out_events_;
-  cl_event execution_;
-  cl_event marker_;
-  std::vector<mem_ptr> input_buffers_;
-  std::vector<mem_ptr> output_buffers_;
-  std::vector<mem_ptr> scratch_buffers_;
+  cl_event_ptr callback_;
+  std::vector<cl_mem_ptr> input_buffers_;
+  std::vector<cl_mem_ptr> output_buffers_;
+  std::vector<cl_mem_ptr> scratch_buffers_;
   std::tuple<Ts...> results_;
   message msg_; // keeps the argument buffers alive for async copy to device
   spawn_config config_;

@@ -115,7 +115,7 @@ public:
   typename detail::il_indices<arg_types>::type indices;
 
   using evnt_vec = std::vector<cl_event>;
-  using mem_vec = std::vector<mem_ptr>;
+  using mem_vec = std::vector<cl_mem_ptr>;
   using len_vec = std::vector<size_t>;
   using out_tup = typename tuple_type_of<output_types>::type;
 
@@ -123,7 +123,7 @@ public:
     return "OpenCL actor";
   }
 
-  static actor create(actor_config actor_conf, const program& prog,
+  static actor create(actor_config actor_conf, const program_ptr prog,
                       const char* kernel_name, const spawn_config& spawn_conf,
                       input_mapping map_args, output_mapping map_result,
                       Ts&&... xs) {
@@ -144,10 +144,10 @@ public:
     check_vec(spawn_conf.offsets(), "offsets");
     check_vec(spawn_conf.local_dimensions(), "local dimensions");
     auto& sys = actor_conf.host->system();
-    auto itr = prog.available_kernels_.find(kernel_name);
-    if (itr == prog.available_kernels_.end()) {
-      kernel_ptr kernel;
-      kernel.reset(v2get(CAF_CLF(clCreateKernel), prog.program_.get(),
+    auto itr = prog->available_kernels_.find(kernel_name);
+    if (itr == prog->available_kernels_.end()) {
+      cl_kernel_ptr kernel;
+      kernel.reset(v2get(CAF_CLF(clCreateKernel), prog->program_.get(),
                                  kernel_name),
                    false);
       return make_actor<opencl_actor, actor>(sys.next_actor_id(), sys.node(),
@@ -221,15 +221,15 @@ public:
     enqueue(ptr->sender, ptr->mid, ptr->move_content_to_message(), eu);
   }
 
-  opencl_actor(actor_config actor_conf, const program& prog,
-               kernel_ptr kernel, spawn_config spawn_conf,
+  opencl_actor(actor_config actor_conf, const program_ptr prog,
+               cl_kernel_ptr kernel, spawn_config spawn_conf,
                input_mapping map_args, output_mapping map_result,
                std::tuple<Ts...> xs)
       : monitorable_actor(actor_conf),
         kernel_(std::move(kernel)),
-        program_(prog.program_),
-        context_(prog.context_),
-        queue_(prog.queue_),
+        program_(prog->program_),
+        context_(prog->context_),
+        queue_(prog->queue_),
         config_(std::move(spawn_conf)),
         map_args_(std::move(map_args)),
         map_results_(std::move(map_result)),
@@ -290,11 +290,10 @@ public:
     using value_type = typename detail::tl_at<unpacked_types, I>::type;
     using container_type = mem_ref<value_type>;
     auto container = msg.get_as<container_type>(InPos);
-    CAF_ASSERT(container.location() == placement::global_mem);
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              sizeof(cl_mem), static_cast<const void*>(&container.get()));
     auto event = container.take_event();
-    if (event != nullptr)
+    if (event)
       events.push_back(event);
   }
 
@@ -340,9 +339,8 @@ public:
              sizeof(cl_mem), static_cast<const void*>(&buffer));
     events.push_back(event);
     std::get<OutPos>(result) = mem_ref<value_type>{
-      len, placement::global_mem, queue_, mem_ptr{buffer, false},
-      size_t{CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY},
-      nullptr, false, none
+      len, queue_, cl_mem_ptr{buffer, false},
+      size_t{CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY}, nullptr
     };
   }
 
@@ -353,11 +351,10 @@ public:
     using value_type = typename detail::tl_at<unpacked_types, I>::type;
     using container_type = mem_ref<value_type>;
     auto container = msg.get_as<container_type>(InPos);
-    CAF_ASSERT(container.location() == placement::global_mem);
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              sizeof(cl_mem), static_cast<const void*>(&container.get()));
     auto event = container.take_event();
-    if (event != nullptr)
+    if (event)
       events.push_back(event);
     lengths.push_back(container.size());
     outputs.push_back(container.get());
@@ -370,11 +367,10 @@ public:
     using value_type = typename detail::tl_at<unpacked_types, I>::type;
     using container_type = mem_ref<value_type>;
     auto container = msg.get_as<container_type>(InPos);
-    CAF_ASSERT(container.location() == placement::global_mem);
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
                      sizeof(cl_mem), static_cast<const void*>(&container.get()));
     auto event = container.take_event();
-    if (event != nullptr)
+    if (event)
       events.push_back(event);
     std::get<OutPos>(result) = container;
   }
@@ -410,8 +406,8 @@ public:
     v1callcl(CAF_CLF(clSetKernelArg), kernel_.get(), static_cast<unsigned>(I),
              sizeof(cl_mem), static_cast<const void*>(&buffer));
     std::get<OutPos>(result) = mem_ref<value_type>{
-      len, placement::global_mem, queue_, {buffer, false},
-      size_t{CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY}, nullptr, false, none
+      len, queue_, {buffer, false},
+      size_t{CL_MEM_READ_WRITE | CL_MEM_HOST_READ_ONLY}, nullptr
     };
   }
 
@@ -474,10 +470,10 @@ public:
     return  length && (*length > 0) ? *length : fallback;
   }
 
-  kernel_ptr kernel_;
-  program_ptr program_;
-  context_ptr context_;
-  command_queue_ptr queue_;
+  cl_kernel_ptr kernel_;
+  cl_program_ptr program_;
+  cl_context_ptr context_;
+  cl_command_queue_ptr queue_;
   spawn_config config_;
   input_mapping map_args_;
   output_mapping map_results_;

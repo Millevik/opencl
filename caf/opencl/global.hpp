@@ -58,11 +58,6 @@ enum buffer_type : cl_mem_flags {
   scratch_space = CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS
 };
 
-/// Memory placement for OpenCL memory buffers
-enum placement {
-  uninitialized, global_mem, local_mem, private_mem
-};
-
 std::ostream& operator<<(std::ostream& os, device_type dev);
 device_type device_type_from_ulong(cl_ulong dev);
 
@@ -70,6 +65,9 @@ device_type device_type_from_ulong(cl_ulong dev);
 using dim_vec = detail::limited_vector<size_t, 3>;
 
 std::string get_opencl_error(cl_int err);
+
+std::string event_status(cl_event event);
+
 
 } // namespace opencl
 } // namespace caf

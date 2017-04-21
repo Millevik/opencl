@@ -33,15 +33,15 @@ using namespace std;
 namespace caf {
 namespace opencl {
 
-const optional<const device&> manager::get_device(size_t dev_id) const {
+optional<device_ptr> manager::get_device(size_t dev_id) const {
   if (platforms_.empty())
     return none;
   size_t to = 0;
   for (auto& pl : platforms_) {
     auto from = to;
-    to += pl.get_devices().size();
+    to += pl->get_devices().size();
     if (dev_id >= from && dev_id < to)
-      return pl.get_devices()[dev_id - from];
+      return pl->get_devices()[dev_id - from];
   }
   return none;
 }
@@ -59,7 +59,7 @@ void manager::init(actor_system_config&) {
   for (auto& pl_id : platform_ids) {
     platforms_.push_back(platform::create(pl_id, current_device_id));
     current_device_id +=
-      static_cast<unsigned>(platforms_.back().get_devices().size());
+      static_cast<unsigned>(platforms_.back()->get_devices().size());
   }
 }
 
@@ -84,8 +84,9 @@ actor_system::module* manager::make(actor_system& sys,
   return new manager{sys};
 }
 
-program manager::create_program_from_file(const char* path, const char* options,
-                                          uint32_t device_id) {
+program_ptr manager::create_program_from_file(const char* path,
+                                              const char* options,
+                                              uint32_t device_id) {
   std::ifstream read_source{std::string(path), std::ios::in};
   string kernel_source;
   if (read_source) {
@@ -104,8 +105,9 @@ program manager::create_program_from_file(const char* path, const char* options,
   return create_program(kernel_source.c_str(), options, device_id);
 }
 
-program manager::create_program(const char* kernel_source, const char* options,
-                                uint32_t device_id) {
+program_ptr manager::create_program(const char* kernel_source,
+                                    const char* options,
+                                    uint32_t device_id) {
   auto dev = get_device(device_id);
   if (!dev) {
     ostringstream oss;
@@ -116,8 +118,9 @@ program manager::create_program(const char* kernel_source, const char* options,
   return create_program(kernel_source, options, *dev);
 }
 
-program manager::create_program_from_file(const char* path, const char* options,
-                                          const device& dev) {
+program_ptr manager::create_program_from_file(const char* path,
+                                              const char* options,
+                                              const device_ptr dev) {
   std::ifstream read_source{std::string(path), std::ios::in};
   string kernel_source;
   if (read_source) {
@@ -136,16 +139,17 @@ program manager::create_program_from_file(const char* path, const char* options,
   return create_program(kernel_source.c_str(), options, dev);
 }
 
-program manager::create_program(const char* kernel_source, const char* options,
-                                const device& dev) {
+program_ptr manager::create_program(const char* kernel_source,
+                                    const char* options,
+                                    const device_ptr dev) {
   // create program object from kernel source
   size_t kernel_source_length = strlen(kernel_source);
-  program_ptr pptr;
-  pptr.reset(v2get(CAF_CLF(clCreateProgramWithSource), dev.context_.get(),
+  cl_program_ptr pptr;
+  pptr.reset(v2get(CAF_CLF(clCreateProgramWithSource), dev->context_.get(),
                            1u, &kernel_source, &kernel_source_length),
              false);
   // build programm from program object
-  auto dev_tmp = dev.device_id_.get();
+  auto dev_tmp = dev->device_id_.get();
   auto err = clBuildProgram(pptr.get(), 1, &dev_tmp, options, nullptr, nullptr);
   if (err != CL_SUCCESS) {
     ostringstream oss;
@@ -176,7 +180,7 @@ program manager::create_program(const char* kernel_source, const char* options,
   }
   cl_uint number_of_kernels = 0;
   clCreateKernelsInProgram(pptr.get(), 0u, nullptr, &number_of_kernels);
-  map<string, kernel_ptr> available_kernels;
+  map<string, cl_kernel_ptr> available_kernels;
   if (number_of_kernels > 0) {
     vector<cl_kernel> kernels(number_of_kernels);
     err = clCreateKernelsInProgram(pptr.get(), number_of_kernels,
@@ -198,7 +202,7 @@ program manager::create_program(const char* kernel_source, const char* options,
             << get_opencl_error(err);
         throw runtime_error(oss.str());
       }
-      kernel_ptr kernel;
+      cl_kernel_ptr kernel;
       kernel.reset(move(kernels[i]));
       available_kernels.emplace(string(name.data()), move(kernel));
     }
@@ -207,7 +211,8 @@ program manager::create_program(const char* kernel_source, const char* options,
                     " on some platforms, we'll ignore this and try to build"
                     " each kernel individually by name.");
   }
-  return {dev.context_, dev.queue_, pptr, move(available_kernels)};
+  return make_counted<program>(dev->context_, dev->queue_, pptr,
+                               move(available_kernels));
 }
 
 manager::manager(actor_system& sys) : system_(sys) {

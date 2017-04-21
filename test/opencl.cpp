@@ -322,7 +322,7 @@ void check_mref_results(const string& description,
 
 void test_opencl(actor_system& sys) {
   auto& mngr = sys.opencl_manager();
-  auto opt = mngr.get_device_if([](const device&){ return true; });
+  auto opt = mngr.get_device_if([](const device_ptr){ return true; });
   CAF_REQUIRE(opt);
   auto dev = *opt;
   auto prog = mngr.create_program(kernel_source, "", dev);
@@ -419,7 +419,7 @@ void test_opencl(actor_system& sys) {
   );
 
   // test for manuel return size selection (max workgroup size 1d)
-  auto max_wg_size = min(dev.get_max_work_item_sizes()[0], size_t{512});
+  auto max_wg_size = min(dev->get_max_work_item_sizes()[0], size_t{512});
   auto reduce_buffer_size = static_cast<size_t>(max_wg_size) * 8;
   auto reduce_local_size  = static_cast<size_t>(max_wg_size);
   auto reduce_work_groups = reduce_buffer_size / reduce_local_size;
@@ -468,7 +468,7 @@ void test_opencl(actor_system& sys) {
 
 void test_arguments(actor_system& sys) {
   auto& mngr = sys.opencl_manager();
-  auto opt = mngr.get_device_if([](const device&){ return true; });
+  auto opt = mngr.get_device_if([](const device_ptr){ return true; });
   CAF_REQUIRE(opt);
   auto dev = *opt;
   scoped_actor self{sys};
@@ -566,43 +566,6 @@ void test_arguments(actor_system& sys) {
   );
 }
 
-void test_phases(actor_system& sys) {
-  auto& mngr = sys.opencl_manager();
-  auto opt = mngr.get_device(0);
-  CAF_REQUIRE(opt);
-  auto dev = *opt;
-  scoped_actor self{sys};
-  auto wrong_msg = [&](message_view& x) -> result<message> {
-    CAF_ERROR("unexpected message" << x.content().stringify());
-    return sec::unexpected_message;
-  };
-  ivec input = make_iota_vector<int>(problem_size);
-  ivec expected{input};
-  for_each(begin(expected), end(expected), [](int& val) { val *= 2; });
-  auto prog   = mngr.create_program(kernel_source, "", dev);
-  auto conf   = spawn_config{dims{input.size()}};
-  auto worker = mngr.spawn_stage<int*>(prog, kn_inout, conf);
-  auto buf    = dev.global_argument(input);
-  CAF_CHECK(buf.size(), input.size());
-  self->send(worker, buf);
-  self->receive(
-    [&](iref& ref) {
-      auto res = ref.data();
-      CAF_CHECK(res);
-      check_vector_results("Testing phase one", expected, *res);
-    }, others >> wrong_msg
-  );
-  for_each(begin(expected), end(expected), [](int& val) { val *= 2; });
-  self->send(worker, buf);
-  self->receive(
-    [&](iref& ref) {
-      auto res = ref.data();
-      CAF_CHECK(res);
-      check_vector_results("Testing phase one", expected, *res);
-    }, others >> wrong_msg
-  );
-}
-
 CAF_TEST(opencl_basics) {
   actor_system_config cfg;
   cfg.load<opencl::manager>()
@@ -633,7 +596,7 @@ CAF_TEST(opencl_mem_refs) {
   auto dev = *opt;
   // global arguments
   vector<uint32_t> input{1, 2, 3, 4};
-  auto buf_1 = dev.global_argument(input, buffer_type::input_output);
+  auto buf_1 = dev->global_argument(input, buffer_type::input_output);
   CAF_CHECK_EQUAL(buf_1.size(), input.size());
   auto res_1 = buf_1.data();
   CAF_CHECK(res_1);
@@ -645,7 +608,7 @@ CAF_TEST(opencl_mem_refs) {
   CAF_CHECK_EQUAL((*res_2)[0], input[0]);
   CAF_CHECK_EQUAL((*res_2)[1], input[1]);
   vector<uint32_t> new_input{1,2,3,4,5};
-  buf_1 = dev.global_argument(new_input, buffer_type::input_output);
+  buf_1 = dev->global_argument(new_input, buffer_type::input_output);
   CAF_CHECK_EQUAL(buf_1.size(), new_input.size());
   auto res_3 = buf_1.data();
   CAF_CHECK(res_3);
@@ -656,17 +619,6 @@ CAF_TEST(opencl_mem_refs) {
   buf_2.reset();
   auto res_5 = buf_2.data();
   CAF_CHECK(!res_5);
-  // TODO: test copy is really a copy, not the same onbject
-  // local args
-  auto buf_local_1 = dev.local_argument<uint32_t>(128);
-  CAF_CHECK_EQUAL(buf_local_1.size(), 128u);
-  // private args
-  auto private_value = 42;
-  auto buf_private_1 = dev.private_argument(private_value);
-  CAF_CHECK_EQUAL(buf_private_1.size(), 1u);
-  auto private_value_expected = buf_private_1.value();
-  CAF_REQUIRE(private_value_expected);
-  CAF_CHECK_EQUAL(private_value, *private_value_expected);
 }
 
 CAF_TEST(opencl_stages) {
@@ -674,7 +626,6 @@ CAF_TEST(opencl_stages) {
   cfg.load<opencl::manager>()
     .add_message_type<ivec>("int_vector");
   actor_system system{cfg};
-  test_phases(system);
   system.await_all_actors_done();
 }
 
@@ -783,7 +734,7 @@ void test_in_val_out_val(actor_system& sys) {
   }, others >> wrong_msg);
 
   // test for manuel return size selection (max workgroup size 1d)
-  auto max_wg_size = min(dev.get_max_work_item_sizes()[0], size_t{512});
+  auto max_wg_size = min(dev->get_max_work_item_sizes()[0], size_t{512});
   auto reduce_buffer_size = static_cast<size_t>(max_wg_size) * 8;
   auto reduce_local_size  = static_cast<size_t>(max_wg_size);
   auto reduce_work_groups = reduce_buffer_size / reduce_local_size;
@@ -853,7 +804,7 @@ void test_in_val_out_mref(actor_system& sys) {
                        " (kernel passed directly)", res1, result);
   }, others >> wrong_msg);
   // test for manuel return size selection (max workgroup size 1d)
-  auto max_wg_size = min(dev.get_max_work_item_sizes()[0], size_t{512});
+  auto max_wg_size = min(dev->get_max_work_item_sizes()[0], size_t{512});
   auto reduce_buffer_size = static_cast<size_t>(max_wg_size) * 8;
   auto reduce_local_size  = static_cast<size_t>(max_wg_size);
   auto reduce_work_groups = reduce_buffer_size / reduce_local_size;
@@ -868,11 +819,9 @@ void test_in_val_out_mref(actor_system& sys) {
                            in<int>{}, out<int, mref>{res_size});
   self->send(w5, move(input));
   auto wg_size_as_int = static_cast<int>(max_wg_size);
-  ivec res4{
-    wg_size_as_int * 7, wg_size_as_int * 6, wg_size_as_int * 5,
-    wg_size_as_int * 4, wg_size_as_int * 3, wg_size_as_int * 2,
-    wg_size_as_int    ,                  0
-  };
+  ivec res4{wg_size_as_int * 7, wg_size_as_int * 6, wg_size_as_int * 5,
+            wg_size_as_int * 4, wg_size_as_int * 3, wg_size_as_int * 2,
+            wg_size_as_int * 1, wg_size_as_int * 0};
   self->receive([&](iref& result) {
     check_mref_results("Passing size for the output", res4, result);
   }, others >> wrong_msg);
@@ -897,7 +846,7 @@ void test_in_mref_out_val(actor_system& sys) {
   auto conf = opencl::spawn_config{dims{matrix_size, matrix_size}};
   auto w1 = mngr.spawn_new(prog, kn_matrix, conf, in<int, mref>{}, out<int>{});
   auto matrix1 = make_iota_vector<int>(matrix_size * matrix_size);
-  auto input1 = dev.global_argument(matrix1);
+  auto input1 = dev->global_argument(matrix1);
   self->send(w1, input1);
   self->receive([&](const ivec& result) {
     check_vector_results("Simple matrix multiplication using vectors"
@@ -912,7 +861,7 @@ void test_in_mref_out_val(actor_system& sys) {
                          " (kernel passed directly)", res1, result);
   }, others >> wrong_msg);
   // test for manuel return size selection (max workgroup size 1d)
-  auto max_wg_size = min(dev.get_max_work_item_sizes()[0], size_t{512});
+  auto max_wg_size = min(dev->get_max_work_item_sizes()[0], size_t{512});
   auto reduce_buffer_size = static_cast<size_t>(max_wg_size) * 8;
   auto reduce_local_size  = static_cast<size_t>(max_wg_size);
   auto reduce_work_groups = reduce_buffer_size / reduce_local_size;
@@ -925,12 +874,12 @@ void test_in_mref_out_val(actor_system& sys) {
   auto res_size = [&](const iref&) { return reduce_result_size; };
   auto w5 = mngr.spawn_new(prog, kn_reduce, conf3,
                            in<int, mref>{}, out<int>{res_size});
-  auto input2 = dev.global_argument(values);
+  auto input2 = dev->global_argument(values);
   self->send(w5, input2);
   auto multiplier = static_cast<int>(max_wg_size);
   ivec res4{multiplier * 7, multiplier * 6, multiplier * 5,
             multiplier * 4, multiplier * 3, multiplier * 2,
-            multiplier    ,              0};
+            multiplier * 1, multiplier * 0};
   self->receive([&](const ivec& result) {
     check_vector_results("Passing size for the output", res4, result);
   }, others >> wrong_msg);
@@ -956,7 +905,7 @@ void test_in_mref_out_mref(actor_system& sys) {
   auto w1 = mngr.spawn_new(prog, kn_matrix, conf,
                            in<int, mref>{}, out<int, mref>{});
   auto matrix1 = make_iota_vector<int>(matrix_size * matrix_size);
-  auto input1 = dev.global_argument(matrix1);
+  auto input1 = dev->global_argument(matrix1);
   self->send(w1, input1);
   self->receive([&](iref& result) {
     check_mref_results("Simple matrix multiplication using vectors"
@@ -971,7 +920,7 @@ void test_in_mref_out_mref(actor_system& sys) {
                        " (kernel passed directly)", res1, result);
   }, others >> wrong_msg);
   // test for manuel return size selection (max workgroup size 1d)
-  auto max_wg_size = min(dev.get_max_work_item_sizes()[0], size_t{512});
+  auto max_wg_size = min(dev->get_max_work_item_sizes()[0], size_t{512});
   auto reduce_buffer_size = static_cast<size_t>(max_wg_size) * 8;
   auto reduce_local_size  = static_cast<size_t>(max_wg_size);
   auto reduce_work_groups = reduce_buffer_size / reduce_local_size;
@@ -984,7 +933,7 @@ void test_in_mref_out_mref(actor_system& sys) {
   auto res_size = [&](const iref&) { return reduce_result_size; };
   auto w5 = mngr.spawn_new(prog, kn_reduce, conf3,
                            in<int, mref>{}, out<int, mref>{res_size});
-  auto input2 = dev.global_argument(values);
+  auto input2 = dev->global_argument(values);
   self->send(w5, input2);
   auto multiplier = static_cast<int>(max_wg_size);
   ivec res4{multiplier * 7, multiplier * 6, multiplier * 5,
@@ -1012,7 +961,7 @@ void test_varying_arguments(actor_system& sys) {
   size_t size = 23;
   spawn_config conf{dims{size}};
   auto input1 = make_iota_vector<int>(size);
-  auto input2 = dev.global_argument(input1);
+  auto input2 = dev->global_argument(input1);
   auto w1 = mngr.spawn_new(prog, kn_varying, conf,
                            in<int>{}, out<int>{}, in<int>{}, out<int>{});
   self->send(w1, input1, input1);
@@ -1045,8 +994,8 @@ void test_inout(actor_system& sys) {
   };
   // tests
   ivec input = make_iota_vector<int>(problem_size);
-  auto input2 = dev.global_argument(input);
-  auto input3 = dev.global_argument(input);
+  auto input2 = dev->global_argument(input);
+  auto input3 = dev->global_argument(input);
   ivec res{input};
   for_each(begin(res), end(res), [](int& val){ val *= 2; });
   auto conf = spawn_config{dims{problem_size}};

@@ -33,11 +33,16 @@ class program;
 class manager;
 template <class T> class mem_ref;
 
-class device {
+class device;
+using device_ptr = intrusive_ptr<device>;
+
+class device : public ref_counted {
 public:
   friend class program;
   friend class manager;
   template <class T> friend class mem_ref;
+  template <class T, class... Ts>
+  friend intrusive_ptr<T> caf::make_counted(Ts&&...);
 
   /// Create an argument for an OpenCL kernel with data placed in global memory.
   template <class T>
@@ -49,12 +54,12 @@ public:
     size_t buffer_size = sizeof(T) * num_elements;
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(), flags,
                         buffer_size, nullptr);
-    cl_event event = v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
-                                     queue_.get(), buffer, blocking,
-                                     cl_uint{0}, buffer_size, data.data());
-    return mem_ref<T>{num_elements, placement::global_mem, queue_,
-                      std::move(buffer), flags, event, false};
-    // TODO: save ref to mem_ref and clean up on destruction?
+    cl_event_ptr event{v1get<cl_event>(CAF_CLF(clEnqueueWriteBuffer),
+                                       queue_.get(), buffer, blocking,
+                                       cl_uint{0}, buffer_size, data.data()),
+                       false};
+    return mem_ref<T>{num_elements, queue_, std::move(buffer), flags,
+                      std::move(event)};
   }
 
   /// Create an argument for an OpenCL kernel in gloabl memory without data.
@@ -63,29 +68,13 @@ public:
                               cl_mem_flags flags = buffer_type::scratch_space) {
     auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(), flags,
                         sizeof(T) * size, nullptr);
-    return mem_ref<T>{size, placement::global_mem, queue_, std::move(buffer),
-                      flags, nullptr};
-    // TODO: save ref to mem_ref and clean up on destruction?
-  }
-
-  /// Create an argument for an OpenCL kernel that is located in local memory.
-  /// This argument cannot be accessed from the CPU context
-  template <class T>
-  mem_ref<T> local_argument(size_t size) {
-    return mem_ref<T>{size, placement::local_mem, queue_, nullptr,
-                      CL_MEM_HOST_NO_ACCESS, nullptr};
-  }
-
-  /// Create a private argument, which is only a single value.
-  template <class T>
-  mem_ref<T> private_argument(T value) {
-    return mem_ref<T>(1, placement::private_mem, queue_, nullptr,
-                      CL_MEM_HOST_NO_ACCESS, nullptr, false, std::move(value));
+    return mem_ref<T>{size, queue_, std::move(buffer), flags, nullptr};
   }
 
   /// Intialize a new device in a context using a sepcific device_id
-  static device create(const context_ptr& context, const device_ptr& device_id,
-                       unsigned id);
+  static device_ptr create(const cl_context_ptr& context,
+                           const cl_device_ptr& device_id,
+                           unsigned id);
   /// Synchronizes all commands in its queue, waiting for them to finish.
   void synchronize();
   /// Get the id assigned by caf
@@ -141,22 +130,30 @@ public:
   /// Returns device info on CL_DEVICE_NAME
   inline const std::string& get_name() const;
 
+  void queue_count() {
+    unsigned count = 0;
+    clGetCommandQueueInfo(queue_.get(), CL_QUEUE_REFERENCE_COUNT,
+                          sizeof(unsigned), &count, nullptr);
+    std::cout << "Command queue '" << name_ << "' count: "
+              << count << std::endl;
+  }
+
 private:
-  device(device_ptr device_id, command_queue_ptr queue, context_ptr context,
-         unsigned id);
+  device(cl_device_ptr device_id, cl_command_queue_ptr queue,
+         cl_context_ptr context, unsigned id);
 
   template <class T>
-  static T info(const device_ptr& device_id, unsigned info_flag) {
+  static T info(const cl_device_ptr& device_id, unsigned info_flag) {
     T value;
     clGetDeviceInfo(device_id.get(), info_flag, sizeof(T), &value, nullptr);
     return value;
   }
 
-  static std::string info_string(const device_ptr& device_id,
+  static std::string info_string(const cl_device_ptr& device_id,
                                  unsigned info_flag);
-  device_ptr device_id_;
-  command_queue_ptr queue_;
-  context_ptr context_;
+  cl_device_ptr device_id_;
+  cl_command_queue_ptr queue_;
+  cl_context_ptr context_;
   unsigned id_;
 
   bool profiling_enabled_;              // CL_DEVICE_QUEUE_PROPERTIES

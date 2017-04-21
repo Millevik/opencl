@@ -34,7 +34,7 @@ struct cl_spawn_helper {
   using map_in_fun = std::function<optional<message> (message&)>;
   using map_out_fun = typename impl::output_mapping;
 
-  actor operator()(actor_config actor_cfg, const opencl::program& p,
+  actor operator()(actor_config actor_cfg, const opencl::program_ptr p,
                    const char* fn, const opencl::spawn_config& spawn_cfg,
                    Ts&&... xs) const {
     return actor_cast<actor>(impl::create(std::move(actor_cfg),
@@ -42,7 +42,7 @@ struct cl_spawn_helper {
                                           map_in_fun{}, map_out_fun{},
                                           std::move(xs)...));
   }
-  actor operator()(actor_config actor_cfg, const opencl::program& p,
+  actor operator()(actor_config actor_cfg, const opencl::program_ptr p,
                    const char* fn, const opencl::spawn_config& spawn_cfg,
                    map_in_fun map_input, map_out_fun map_output,
                    Ts&&... xs) const {
@@ -60,7 +60,7 @@ struct cl_spawn_helper_new {
   using map_in_fun = std::function<optional<message> (message&)>;
   using map_out_fun = typename impl::output_mapping;
 
-  actor operator()(actor_config actor_cfg, const opencl::program& p,
+  actor operator()(actor_config actor_cfg, const opencl::program_ptr p,
                    const char* fn, const opencl::spawn_config& spawn_cfg,
                    Ts&&... xs) const {
     return actor_cast<actor>(impl::create(std::move(actor_cfg),
@@ -68,7 +68,7 @@ struct cl_spawn_helper_new {
                                           map_in_fun{}, map_out_fun{},
                                           std::move(xs)...));
   }
-  actor operator()(actor_config actor_cfg, const opencl::program& p,
+  actor operator()(actor_config actor_cfg, const opencl::program_ptr p,
                    const char* fn, const opencl::spawn_config& spawn_cfg,
                    map_in_fun map_input, map_out_fun map_output,
                    Ts&&... xs) const {

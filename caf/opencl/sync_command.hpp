@@ -47,9 +47,9 @@ public:
   sync_command(std::tuple<strong_actor_ptr,message_id> handle,
                strong_actor_ptr actor_facade,
                std::vector<cl_event> events,
-               std::vector<mem_ptr> input_bufs,
-               std::vector<mem_ptr> output_bufs,
-               std::vector<mem_ptr> scratch_bufs,
+               std::vector<cl_mem_ptr> input_bufs,
+               std::vector<cl_mem_ptr> output_bufs,
+               std::vector<cl_mem_ptr> scratch_bufs,
                std::vector<size_t> result_sizes,
                message msg)
       : result_sizes_(std::move(result_sizes)),
@@ -187,9 +187,9 @@ private:
   strong_actor_ptr actor_facade_;
   std::vector<cl_event> mem_in_events_;
   std::vector<cl_event> mem_out_events_;
-  std::vector<mem_ptr> input_buffers_;
-  std::vector<mem_ptr> output_buffers_;
-  std::vector<mem_ptr> scratch_buffers_;
+  std::vector<cl_mem_ptr> input_buffers_;
+  std::vector<cl_mem_ptr> output_buffers_;
+  std::vector<cl_mem_ptr> scratch_buffers_;
   std::tuple<Ts...> result_buffers_;
   message msg_; // required to keep the argument buffers alive (async copy)
 };

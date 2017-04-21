@@ -36,7 +36,6 @@
 #include "caf/opencl/smart_ptr.hpp"
 #include "caf/opencl/actor_facade.hpp"
 #include "caf/opencl/opencl_actor.hpp"
-#include "caf/opencl/actor_facade_phase.hpp"
 
 #include "caf/opencl/detail/spawn_helper.hpp"
 
@@ -47,17 +46,17 @@ class manager : public actor_system::module {
 public:
   friend class program;
   friend class actor_system;
-  friend command_queue_ptr get_command_queue(uint32_t id);
+  friend cl_command_queue_ptr get_command_queue(uint32_t id);
   manager(const manager&) = delete;
   manager& operator=(const manager&) = delete;
   /// Get the device with id, which is assigned sequientally.
-  const optional<const device&> get_device(size_t dev_id = 0) const;
+  optional<device_ptr> get_device(size_t dev_id = 0) const;
   /// Get the first device that satisfies the predicate.
   /// The predicate should accept a `const device&` and return a bool;
   template <class UnaryPredicate>
-  const optional<const device&> get_device_if(UnaryPredicate p) const {
+  optional<device_ptr> get_device_if(UnaryPredicate p) const {
     for (auto& pl : platforms_) {
-      for (auto& dev : pl.get_devices()) {
+      for (auto& dev : pl->get_devices()) {
         if (p(dev))
           return dev;
       }
@@ -81,39 +80,36 @@ public:
   /// @brief Factory method, that creates a caf::opencl::program
   ///        reading the source from given @p path.
   /// @returns A program object.
-  program create_program_from_file(const char* path,
-                                   const char* options = nullptr,
-                                   uint32_t device_id = 0);
+  program_ptr create_program_from_file(const char* path,
+                                       const char* options = nullptr,
+                                       uint32_t device_id = 0);
 
   /// @brief Factory method, that creates a caf::opencl::program
   ///        from a given @p kernel_source.
   /// @returns A program object.
-  program create_program(const char* kernel_source,
-                         const char* options = nullptr, uint32_t device_id = 0);
+  program_ptr create_program(const char* kernel_source,
+                             const char* options = nullptr,
+                             uint32_t device_id = 0);
 
   /// @brief Factory method, that creates a caf::opencl::program
   ///        reading the source from given @p path.
   /// @returns A program object.
-  program create_program_from_file(const char* path,
-                                   const char* options,
-                                   const device& dev);
+  program_ptr create_program_from_file(const char* path,
+                                       const char* options,
+                                       const device_ptr dev);
 
   /// @brief Factory method, that creates a caf::opencl::program
   ///        from a given @p kernel_source.
   /// @returns A program object.
-  program create_program(const char* kernel_source,
-                         const char* options, const device& dev);
+  program_ptr create_program(const char* kernel_source,
+                             const char* options, const device_ptr dev);
 
-  /// Creates a new actor facade for an OpenCL kernel that invokes
-  /// the function named `fname` from `prog`.
-  /// @throws std::runtime_error if more than three dimensions are set,
-  ///                            `dims.empty()`, or `clCreateKernel` failed.
   template <class T, class... Ts>
   typename std::enable_if<
     opencl::is_opencl_arg<T>::value,
     actor
   >::type
-  spawn(const opencl::program& prog,
+  spawn(const opencl::program_ptr prog,
         const char* fname,
         const opencl::spawn_config& config,
         T x,
@@ -149,7 +145,7 @@ public:
   /// @throws std::runtime_error if more than three dimensions are set,
   ///                            `dims.empty()`, or `clCreateKernel` failed.
   template <class Fun, class... Ts>
-  actor spawn(const opencl::program& prog,
+  actor spawn(const opencl::program_ptr prog,
               const char* fname,
               const opencl::spawn_config& config,
               std::function<optional<message> (message&)> map_args,
@@ -180,44 +176,6 @@ public:
              std::forward<Ts>(xs)...);
   }
 
-  /// Compiles `source` and creates a new actor facade phase for an OpenCL
-  /// kernel that invokes the function named `fname`. The template arguments
-  /// should match the kernel signature, allowing vector<T> for T*. Messages
-  /// sent to the actor should contain mem_ref<T> matching the signature.
-  /// @throws std::runtime_error if more than three dimensions are set,
-  ///                            <tt>dims.empty()</tt>, a compilation error
-  ///                            occured, or @p clCreateKernel failed.
-  template <class... Ts>
-  actor spawn_stage(const char* source, const char* fname,
-                    const opencl::spawn_config& config) {
-    return actor_cast<actor>(
-      actor_facade_phase<Ts...>::create(
-        actor_config{system_.dummy_execution_unit()},
-        create_program(source), fname, config
-      )
-    );
-  }
-
-  /// Creates a new actor facade phase for an OpenCL kernel that invokes
-  /// the function named `fname` from `prog`. The template arguments
-  /// should match the kernel signature, allowing vector<T> for T*. Messages
-  /// sent to the actor should contain mem_ref<T> matching the signature.
-  /// @throws std::runtime_error if more than three dimensions are set,
-  ///                            <tt>dims.empty()</tt>, a compilation error
-  ///                            occured, or @p clCreateKernel failed.
-  template <class... Ts>
-  actor spawn_stage(const opencl::program& prog, const char* fname,
-                    const opencl::spawn_config& config) {
-    return actor_cast<actor>(
-      actor_facade_phase<Ts...>::create(
-        actor_config{system_.dummy_execution_unit()},
-        prog, fname, config
-      )
-    );
-  }
-
-  /****************** WORKING ON NEW IMPL ************************/
-
   /// Creates a new actor facade for an OpenCL kernel that invokes
   /// the function named `fname` from `prog`.
   /// @throws std::runtime_error if more than three dimensions are set,
@@ -227,7 +185,7 @@ public:
     opencl::is_opencl_arg<T>::value,
     actor
   >::type
-  spawn_new(const opencl::program& prog, const char* fname,
+  spawn_new(const opencl::program_ptr prog, const char* fname,
             const opencl::spawn_config& config,
             T x, Ts... xs) {
     detail::cl_spawn_helper_new<T, Ts...> f;
@@ -259,7 +217,7 @@ public:
   /// @throws std::runtime_error if more than three dimensions are set,
   ///                            `dims.empty()`, or `clCreateKernel` failed.
   template <class Fun, class... Ts>
-  actor spawn_new(const opencl::program& prog, const char* fname,
+  actor spawn_new(const opencl::program_ptr prog, const char* fname,
                   const opencl::spawn_config& config,
                   std::function<optional<message> (message&)> map_args,
                   Fun map_result, Ts... xs) {
@@ -292,7 +250,7 @@ protected:
 
 private:
   actor_system& system_;
-  std::vector<platform> platforms_;
+  std::vector<platform_ptr> platforms_;
 };
 
 } // namespace opencl
