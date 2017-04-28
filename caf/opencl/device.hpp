@@ -22,6 +22,8 @@
 
 #include <vector>
 
+#include "caf/sec.hpp"
+
 #include "caf/opencl/global.hpp"
 #include "caf/opencl/smart_ptr.hpp"
 #include "caf/opencl/opencl_err.hpp"
@@ -62,7 +64,7 @@ public:
                       std::move(event)};
   }
 
-  /// Create an argument for an OpenCL kernel in gloabl memory without data.
+  /// Create an argument for an OpenCL kernel in global memory without data.
   template <class T>
   mem_ref<T> scratch_argument(size_t size,
                               cl_mem_flags flags = buffer_type::scratch_space) {
@@ -71,7 +73,39 @@ public:
     return mem_ref<T>{size, queue_, std::move(buffer), flags, nullptr};
   }
 
-  /// Intialize a new device in a context using a sepcific device_id
+  template <class T>
+  expected<mem_ref<T>> copy(mem_ref<T>& mem) {
+    if (!mem.get())
+      return make_error(sec::runtime_error, "No memory assigned.");
+    auto buffer_size = sizeof(T) * mem.size();
+    cl_event event;
+    auto buffer = v2get(CAF_CLF(clCreateBuffer), context_.get(), mem.access(),
+                        buffer_size, nullptr);
+    std::vector<cl_event> prev_events;
+    cl_event e = mem.take_event();
+    if (e)
+      prev_events.push_back(e);
+    auto err = clEnqueueCopyBuffer(queue_.get(), mem.get().get(), buffer,
+                                   0, 0, // no offset for now
+                                   buffer_size, prev_events.size(),
+                                   prev_events.data(), &event);
+    if (err != CL_SUCCESS)
+      return make_error(sec::runtime_error, get_opencl_error(err));
+    // callback to release the previous event 
+    err = clSetEventCallback(event, CL_COMPLETE,
+                             [](cl_event, cl_int, void* data) {
+                               auto e = reinterpret_cast<cl_event>(data);
+                               if (e) clReleaseEvent(e);
+                             },
+                             e);
+    if (err != CL_SUCCESS)
+      return make_error(sec::runtime_error, get_opencl_error(err));
+    // decrements the previous event we used for waiting above
+    return mem_ref<T>(mem.size(), queue_, std::move(buffer),
+                      mem.access(), {event, false});
+  }
+
+  /// Initialize a new device in a context using a specific device_id
   static device_ptr create(const cl_context_ptr& context,
                            const cl_device_ptr& device_id,
                            unsigned id);

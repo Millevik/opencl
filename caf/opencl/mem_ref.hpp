@@ -52,6 +52,7 @@ struct msg_adding_event {
   cl_event_ptr event_;
 };
 
+class device;
 
 /// A reference type for buffers on a OpenCL devive. Access is not thread safe.
 /// Hence, a mem_ref should only be passed to actors sequentially.
@@ -63,6 +64,7 @@ public:
   friend struct msg_adding_event;
   template <class... Ts>
   friend class opencl_actor;
+  friend class device;
 
   expected<std::vector<T>> data(optional<size_t> result_size = none) {
     if (!memory_)
@@ -118,27 +120,6 @@ public:
   }
   */
 
-  expected<mem_ref<T>> copy() {
-    if (!memory_)
-      return make_error(sec::runtime_error, "No memory assigned.");
-    auto buffer_size = sizeof(T) * num_elements_;
-    cl_event event;
-    cl_mem buffer;
-    std::vector<cl_event> prev_events;
-    if (event_ != nullptr)
-      prev_events.push_back(event_);
-    auto err = clEnqueueCopyBuffer(queue_.get(), memory_.get(), buffer,
-                                   0, 0, // no offset for now
-                                   buffer_size, prev_events.size(),
-                                   prev_events.data(), &event);
-    if (err != CL_SUCCESS)
-      return make_error(sec::runtime_error, get_opencl_error(err));
-    // decrements the previous event we used for waiting above
-    set_event(event, false);
-    return mem_ref<T>(num_elements_, queue_, std::move(buffer),
-                      access_, event, true);
-  }
-
   inline const cl_mem_ptr& get() const {
     return memory_;
   }
@@ -149,6 +130,10 @@ public:
 
   inline size_t size() const {
     return num_elements_;
+  }
+
+  inline cl_mem_flags access() const {
+    return access_;
   }
 
   mem_ref()
@@ -197,7 +182,7 @@ private:
     event_ = std::move(e);
   }
 
-  inline cl_event event() {
+  inline cl_event_ptr event() {
     return event_;
   }
 
