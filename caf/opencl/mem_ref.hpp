@@ -62,7 +62,7 @@ public:
   using value_type = T;
 
   friend struct msg_adding_event;
-  template <class... Ts>
+  template <bool PassConfig, class... Ts>
   friend class opencl_actor;
   friend class device;
 

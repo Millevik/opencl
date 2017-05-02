@@ -44,7 +44,7 @@ public:
   friend class manager;
   template <class... Ts>
   friend class actor_facade;
-  template <class... Ts>
+  template <bool PassConfig, class... Ts>
   friend class opencl_actor;
   template <class T, class... Ts>
   friend intrusive_ptr<T> caf::make_counted(Ts&&...);

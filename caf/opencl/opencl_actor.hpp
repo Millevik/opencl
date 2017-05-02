@@ -90,7 +90,7 @@ struct tuple_type_of<detail::type_list<Ts...>> {
   using type = std::tuple<Ts...>;
 };
 
-template <class... Ts>
+template <bool PassConfig, class... Ts>
 class opencl_actor : public monitorable_actor {
 public:
   using arg_types = detail::type_list<Ts...>;
@@ -100,7 +100,10 @@ public:
     typename detail::tl_filter<arg_types, is_input_arg>::type;
   using input_types =
     typename detail::tl_map<input_wrapped_types, extract_input_type>::type;
-  using input_mapping = std::function<optional<message> (message&)>;
+  using input_mapping = typename std::conditional<PassConfig,
+          std::function<optional<message> (spawn_config&, message&)>,
+          std::function<optional<message> (message&)>
+        >::type;
 
   using output_wrapped_types =
     typename detail::tl_filter<arg_types, is_output_arg>::type;
@@ -173,14 +176,8 @@ public:
       config_ = content.get_as<spawn_config>(0);
       content = content.drop(1);
     }
-    if (map_args_) {
-      auto mapped = map_args_(content);
-      if (!mapped) {
-        CAF_LOG_ERROR("Mapping argumentes failed.");
-        return;
-      }
-      content = std::move(*mapped);
-    }
+    if (!map_arguments(content))
+      return;
     if (!content.match_elements(input_types{})) {
       CAF_LOG_ERROR("Message types do not match the expected signature.");
       return;
@@ -468,6 +465,34 @@ public:
   size_t argument_length(Fun& f, message& m, size_t fallback) {
     auto length = f(m);
     return  length && (*length > 0) ? *length : fallback;
+  }
+
+  // Map function requires only the message as argument
+  template <bool Q = PassConfig>
+  typename std::enable_if<!Q, bool>::type map_arguments(message& content) {
+    if (map_args_) {
+      auto mapped = map_args_(content);
+      if (!mapped) {
+        CAF_LOG_ERROR("Mapping argumentes failed.");
+        return false;
+      }
+      content = std::move(*mapped);
+    }
+    return true;
+  }
+
+  // Map function requires reference to config as well as the message
+  template <bool Q = PassConfig>
+  typename std::enable_if<Q, bool>::type map_arguments(message& content) {
+    if (map_args_) {
+      auto mapped = map_args_(config_, content);
+      if (!mapped) {
+        CAF_LOG_ERROR("Mapping argumentes failed.");
+        return false;
+      }
+      content = std::move(*mapped);
+    }
+    return true;
   }
 
   cl_kernel_ptr kernel_;

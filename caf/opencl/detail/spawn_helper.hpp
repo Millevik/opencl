@@ -54,10 +54,10 @@ struct cl_spawn_helper {
   }
 };
 
-template <class... Ts>
+template <bool PassConfig, class... Ts>
 struct cl_spawn_helper_new {
-  using impl = opencl::opencl_actor<Ts...>;
-  using map_in_fun = std::function<optional<message> (message&)>;
+  using impl = opencl::opencl_actor<PassConfig, Ts...>;
+  using map_in_fun = typename impl::input_mapping;
   using map_out_fun = typename impl::output_mapping;
 
   actor operator()(actor_config actor_cfg, const opencl::program_ptr p,
@@ -66,6 +66,15 @@ struct cl_spawn_helper_new {
     return actor_cast<actor>(impl::create(std::move(actor_cfg),
                                           p, fn, spawn_cfg,
                                           map_in_fun{}, map_out_fun{},
+                                          std::move(xs)...));
+  }
+  actor operator()(actor_config actor_cfg, const opencl::program_ptr p,
+                   const char* fn, const opencl::spawn_config& spawn_cfg,
+                   map_in_fun map_input, Ts&&... xs) const {
+    return actor_cast<actor>(impl::create(std::move(actor_cfg),
+                                          p, fn, spawn_cfg,
+                                          std::move(map_input),
+                                          map_out_fun{},
                                           std::move(xs)...));
   }
   actor operator()(actor_config actor_cfg, const opencl::program_ptr p,
